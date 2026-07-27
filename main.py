@@ -1,5 +1,5 @@
 import os, time, threading, requests
-from flask import Flask, jsonify, render_template_string, Response
+from flask import Flask, jsonify, Response
 
 app = Flask(__name__)
 
@@ -193,30 +193,43 @@ def monitor():
 
 threading.Thread(target=monitor, daemon=True).start()
 
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>暴爷无极限 ⚡ 90%+ 绝杀终端</title>
-<style>
-*{box-sizing:border-box}
-body{font-family:'Courier New',Consolas,monospace;padding:12px;background:#05070a;color:#00ff41;margin:0}
-body::before{content:"";position:fixed;top:0;left:0;width:100%;height:100%;background:linear-gradient(rgba(18,16,16,0) 50%,rgba(0,0,0,0.25) 50%);background-size:100% 4px;z-index:999;pointer-events:none}
-.terminal{background:#0c1017;padding:20px;border-radius:12px;max-width:440px;margin:10px auto;border:1px solid #00ff4155;box-shadow:0 0 20px rgba(0,255,65,0.2)}
-.header{text-align:center;border-bottom:1px dashed #00ff4155;padding-bottom:12px;margin-bottom:15px}
-.glitch-title{font-size:22px;font-weight:900;color:#ffe600;text-shadow:0 0 10px #ffe600,0 0 20px #ff003c}
-.sub-title{font-size:10px;color:#00f3ff;margin-top:5px}
-.session-card{background:#070a0f;padding:12px;border-radius:8px;margin-bottom:15px;border:1px solid #00f3ff44}
-.session-top{display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:bold}
-.session-desc{font-size:11px;color:#848e9c;margin-top:4px}
-.box{background:#070a0f;padding:14px;border-radius:8px;margin-bottom:15px;border-left:5px solid #00ff41}
-.title{font-size:11px;color:#848e9c;margin-bottom:4px}
-.val{font-size:14px;font-weight:bold;color:#fff}
-.price-row{display:flex;justify-content:space-between;align-items:center;background:#070a0f;padding:12px 16px;border-radius:8px;margin-bottom:15px;border:1px solid #00ff4144}
-.price-label{font-size:12px;color:#848e9c}
-.price-val{font-size:20px;font-weight:bold;color:#ffe600;text-shadow:0 0 8px #ffe60066}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
-.gbox{background:#070a0f;padding:10px;border-radius:6px;text-align:center;border:1px solid #00ff4133}
-.gname{f
+HTML_PAGE = (
+    "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<title>暴爷无极限 ⚡ 绝杀终端</title>"
+    "<style>body{background:#05070a;color:#00ff41;font-family:monospace;padding:15px;margin:0}"
+    ".box{background:#0c1017;padding:15px;border-radius:10px;border:1px solid #00ff4155;max-width:400px;margin:auto}"
+    "h2{color:#ffe600;text-align:center;margin-top:0}</style></head><body>"
+    "<div class='box'><h2>⚡ 暴爷无极限 ⚡</h2>"
+    "<p><b>状态:</b> <span id='t'>加载中...</span></p>"
+    "<p><b>价格:</b> <span id='p'>$0.00</span></p>"
+    "<p><b>1m RSI:</b> <span id='r1'>--</span> | <b>3m:</b> <span id='r3'>--</span></p>"
+    "<p><b>5m RSI:</b> <span id='r5'>--</span> | <b>10m:</b> <span id='r10'>--</span></p>"
+    "<p><b>1h 大趋势:</b> <span id='r1h'>--</span></p>"
+    "<p><b>建议:</b> <span id='a'>等待信号...</span></p></div>"
+    "<script>setInterval(()=>{fetch('/api/data').then(r=>r.json()).then(d=>{"
+    "document.getElementById('t').innerText=d.title+' ['+d.signal_tier+']';"
+    "document.getElementById('p').innerText='$'+d.price.toFixed(2);"
+    "document.getElementById('r1').innerText=d.rsi_1m.toFixed(2);"
+    "document.getElementById('r3').innerText=d.rsi_3m.toFixed(2);"
+    "document.getElementById('r5').innerText=d.rsi_5m.toFixed(2);"
+    "document.getElementById('r10').innerText=d.rsi_10m.toFixed(2);"
+    "document.getElementById('r1h').innerText=d.rsi_1h.toFixed(2);"
+    "document.getElementById('a').innerText=d.advice;});},1000);</script>"
+    "</body></html>"
+)
+
+@app.route('/')
+def home():
+    return Response(HTML_PAGE, mimetype="text/html")
+
+@app.route('/api/data')
+def api_data():
+    return jsonify(DATA)
+
+@app.route('/test')
+def test_push():
+    bj_time = get_beijing_time()
+    s_name, s_adv, win_rate, _ = get_session_info()
+    t_msg = f"测试事件合约预警通知\n当前时段: {s_name} [{win_rate}]\n策略建议: {s_adv}\n时间: {bj_time}"
+    tg_ok, tg_info = send_t
