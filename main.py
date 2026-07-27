@@ -5,7 +5,7 @@ app = Flask(__name__)
 
 TG_TOKEN = os.environ.get("BOT_TOKEN")
 TG_CHAT = os.environ.get("CHAT_ID")
-PP_TOKEN = os.environ.get("PUSHPLUS_TOKEN")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
 DATA = {
     "price": 0.0, "rsi_1m": 50.0, "rsi_3m": 50.0, "rsi_5m": 50.0, "rsi_10m": 50.0, "rsi_1h": 50.0,
@@ -24,28 +24,30 @@ def send_tg(msg):
             return False, str(e)
     return False, "TG 未配置"
 
-def send_wx(title, content):
-    if not PP_TOKEN:
-        return False, "PushPlus Token 未配置"
+def send_webhook(title, content):
+    if not WEBHOOK_URL:
+        return False, "WEBHOOK_URL 环境变量未配置"
     try:
-        url = "http://www.pushplus.plus/send"
-        data = {
-            "token": PP_TOKEN.strip(),
-            "title": title,
-            "content": content.replace("\n", "<br>"),
-            "template": "html"
-        }
-        r = requests.post(url, json=data, timeout=5)
+        url = WEBHOOK_URL.strip()
+        msg_text = f"⚡【事件合约预警】{title}\n\n{content}"
+        
+        # 兼容企业微信、钉钉、飞书格式
+        if "feishu" in url or "larksuite" in url:
+            payload = {"msg_type": "text", "content": {"text": msg_text}}
+        else:
+            payload = {"msgtype": "text", "text": {"content": msg_text}}
+            
+        r = requests.post(url, json=payload, timeout=5)
         res = r.json()
-        if res.get("code") == 200:
+        if res.get("errcode") == 0 or res.get("StatusCode") == 0 or res.get("code") == 0:
             return True, "发送成功"
-        return False, res.get("msg", "发送失败")
+        return False, f"推送失败: {res}"
     except Exception as e:
         return False, str(e)
 
 def notify(title, text):
     send_tg(f"{title}\n{text}")
-    send_wx(title, f"{text}\n\n时间: {get_beijing_time()}")
+    send_webhook(title, f"{text}\n\n时间: {get_beijing_time()}")
 
 HTML_PAGE = """<!DOCTYPE html>
 <html>
@@ -117,14 +119,14 @@ def api_data():
 @app.route('/test')
 def test_push():
     bj_time = get_beijing_time()
-    t_msg = f"测试事件合约消息通知\n测试时间: {bj_time}"
+    t_msg = f"测试事件合约预警通知\n时间: {bj_time}"
     tg_ok, tg_info = send_tg(f"🧪【测试】\n{t_msg}")
-    wx_ok, wx_info = send_wx("🧪【测试预警】微信通道连通性测试", t_msg)
+    wb_ok, wb_info = send_webhook("企业微信机器人在线诊断测试", t_msg)
     
-    tg_res = "✅ 成功" if tg_ok else f"❌ 失败 ({tg_info})"
-    wx_res = "✅ 成功" if wx_ok else f"❌ 失败 (原因: {wx_info})"
+    tg_res = "<span style='color:green;'>✅ 成功</span>" if tg_ok else f"<span style='color:red;'>❌ 失败 ({tg_info})</span>"
+    wb_res = "<span style='color:green;'>✅ 成功</span>" if wb_ok else f"<span style='color:red;'>❌ 失败 (原因: {wb_info})</span>"
     
-    html = f"<html><body style='padding:20px;background:#181a20;color:#fff;'><h2>🧪 通道实时诊断结果</h2><p><b>1. Telegram:</b> {tg_res}</p><p><b>2. 微信弹窗:</b> {wx_res}</p><hr><p>时间: {bj_time}</p></body></html>"
+    html = f"<html><body style='padding:20px;background:#181a20;color:#fff;'><h2>🧪 通道实时诊断结果</h2><p><b>1. Telegram:</b> {tg_res}</p><p><b>2. 企业微信机器人:</b> {wb_res}</p><hr><p>时间: {bj_time}</p></body></html>"
     return Response(html, mimetype="text/html")
 
 def calc_rsi_wilder(prices, period=6):
@@ -207,28 +209,28 @@ def monitor():
                 "advice": adv, "color": color, "time": bj_time
             }
             if r1 >= 85 and not s1_h:
-                notify("🚨【预警】BTC 1m RSI 极度超买！", f"参考价: ${p}\n1m RSI(6): {r1}")
+                notify("BTC 1m RSI 极度超买！", f"参考价: ${p}\n1m RSI(6): {r1}")
                 s1_h = True
             elif r1 <= 15 and not s1_l:
-                notify("🟢【预警】BTC 1m RSI 极度超卖！", f"参考价: ${p}\n1m RSI(6): {r1}")
+                notify("BTC 1m RSI 极度超卖！", f"参考价: ${p}\n1m RSI(6): {r1}")
                 s1_l = True
             elif 25 < r1 < 75:
                 s1_h = s1_l = False
 
             if r10 >= 85 and not s10_h:
-                notify("🚨【重磅】BTC 10m RSI 极度超买！", f"参考价: ${p}\n10m RSI(6): {r10}")
+                notify("BTC 10m RSI 极度超买！", f"参考价: ${p}\n10m RSI(6): {r10}")
                 s10_h = True
             elif r10 <= 15 and not s10_l:
-                notify("🟢【重磅】BTC 10m RSI 极度超卖！", f"参考价: ${p}\n10m RSI(6): {r10}")
+                notify("BTC 10m RSI 极度超卖！", f"参考价: ${p}\n10m RSI(6): {r10}")
                 s10_l = True
             elif 25 < r10 < 75:
                 s10_h = s10_l = False
 
             if r1h >= 50 and r10 <= 30 and r1 <= 15 and not s_combo:
-                notify("🔥【85%+高胜率】买入看涨 (UP)！", f"参考价: ${p}\n1h:{r1h} | 10m:{r10} | 1m:{r1}")
+                notify("【85%+高胜率】买入看涨 (UP)！", f"参考价: ${p}\n1h:{r1h} | 10m:{r10} | 1m:{r1}")
                 s_combo = True
             elif r1h <= 50 and r10 >= 70 and r1 >= 85 and not s_combo:
-                notify("🔥【85%+高胜率】买入看跌 (DOWN)！", f"参考价: ${p}\n1h:{r1h} | 10m:{r10} | 1m:{r1}")
+                notify("【85%+高胜率】买入看跌 (DOWN)！", f"参考价: ${p}\n1h:{r1h} | 10m:{r10} | 1m:{r1}")
                 s_combo = True
             elif 20 < r1 < 80 and 35 < r10 < 65:
                 s_combo = False
