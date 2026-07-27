@@ -10,7 +10,7 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 DATA = {
     "price": 0.0, "rsi_1m": 50.0, "rsi_3m": 50.0, "rsi_5m": 50.0, "rsi_10m": 50.0, "rsi_1h": 50.0,
     "boll_up": 0.0, "boll_mb": 0.0, "boll_dn": 0.0, "ema7": 0.0, "ema25": 0.0, "ema99": 0.0,
-    "title": "SYSTEM_INIT", "advice": "CONNECTING...", "color": "#00ff41", "time": "--",
+    "title": "LIVE_SYNC", "advice": "CONNECTING...", "color": "#00ff41", "time": "--",
     "session_name": "ANALYZING...", "session_advice": "WAIT...", "win_rate": "--", "signal_tier": "STANDBY"
 }
 
@@ -78,15 +78,22 @@ def calc_ema(prices, period):
         ema = (p * k) + (ema * (1 - k))
     return round(ema, 2)
 
-def fetch_klines(symbol, interval, limit=100):
-    try:
-        r = requests.get("https://fapi.binance.com/fapi/v1/klines", params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=2)
-        if r.status_code == 200:
-            res = r.json()
-            if isinstance(res, list) and len(res) > 0:
-                return [float(k[4]) for k in res]
-    except:
-        pass
+def fetch_klines(interval, limit=100):
+    endpoints = [
+        ("https://fapi.binance.com/fapi/v1/klines", {"symbol": "BTCUSDT", "interval": interval, "limit": limit}),
+        ("https://api.binance.com/api/v3/klines", {"symbol": "BTCUSDT", "interval": interval, "limit": limit}),
+        ("https://dapi.binance.com/dapi/v1/klines", {"symbol": "BTCUSD_PERP", "interval": interval, "limit": limit})
+    ]
+    headers = {"User-Agent": "Mozilla/5.0"}
+    for url, params in endpoints:
+        try:
+            r = requests.get(url, params=params, headers=headers, timeout=3)
+            if r.status_code == 200:
+                res = r.json()
+                if isinstance(res, list) and len(res) > 0:
+                    return [float(k[4]) for k in res]
+        except:
+            continue
     return []
 
 def monitor():
@@ -94,19 +101,21 @@ def monitor():
     lock = False
     while True:
         try:
-            p1 = fetch_klines("BTCUSDT", "1m")
-            p3 = fetch_klines("BTCUSDT", "3m")
-            p5 = fetch_klines("BTCUSDT", "5m")
-            p1h = fetch_klines("BTCUSDT", "1h")
-            if p1 and p3 and p5:
+            p1 = fetch_klines("1m")
+            p3 = fetch_klines("3m")
+            p5 = fetch_klines("5m")
+            p1h = fetch_klines("1h")
+            if p1:
                 p = p1[-1]
-                r1, r3, r5 = calc_rsi(p1), calc_rsi(p3), calc_rsi(p5)
+                r1 = calc_rsi(p1)
+                r3 = calc_rsi(p3) if p3 else r1
+                r5 = calc_rsi(p5) if p5 else r1
                 r1h = calc_rsi(p1h) if p1h else r1
                 bup, bmb, bdn = calc_boll(p1)
                 e7, e25 = calc_ema(p1, 7), calc_ema(p1, 25)
                 e99 = calc_ema(p1h, 99) if p1h else e25
 
-                title, tier, col = "暴爷事件合约矩阵待命", "STANDBY", "#848e9c"
+                title, tier, col = "暴爷事件合约监控中", "ACTIVE", "#00ff41"
                 if p <= bdn and r1 <= 15 and r3 <= 25:
                     title, tier, col = "🔥【S级绝杀·买入看涨(UP)】", "S-TIER", "#00ff41"
                 elif p >= bup and r1 >= 85 and r3 >= 75:
@@ -141,7 +150,7 @@ h2{color:#ffe600;text-align:center;margin-top:0}
 .row{display:flex;justify-content:space-between;margin:8px 0;font-size:13px}
 </style></head><body>
 <div class='box'><h2>⚡ 暴爷事件合约 ⚡</h2>
-<div class='row'><b>状态:</b> <span id='t'>加载中...</span></div>
+<div class='row'><b>状态:</b> <span id='t'>连接中...</span></div>
 <div class='row'><b>现价:</b> <span id='p' style='color:#ffe600;font-weight:bold'>$0.00</span></div>
 <div class='row'><b>BOLL上轨:</b> <span id='bup' style='color:#ff003c'>--</span></div>
 <div class='row'><b>BOLL中轨:</b> <span id='bmb' style='color:#00f3ff'>--</span></div>
