@@ -10,7 +10,7 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 DATA = {
     "price": 0.0, "rsi_1m": 50.0, "rsi_10m": 50.0, "rsi_1h": 50.0,
     "boll_up": 0.0, "boll_mb": 0.0, "boll_dn": 0.0, "ema7": 0.0, "ema25": 0.0, "ema99": 0.0,
-    "title": "⚡ 实时连线成功", "action": "等待 1m/10m RSI 极值共振", "color": "#00ff41",
+    "title": "⚡ 引擎就绪", "action": "市场监控与高胜率判定中...", "color": "#00ff41",
     "bj_time": "--", "session_name": "--"
 }
 
@@ -85,18 +85,18 @@ def resample_klines(p1m, period_minutes):
             res.append(chunk[-1])
     return res
 
-def fetch_binance_reliable(interval, limit=120):
-    # 多线路 CDN 镜像和官方公开加速节点，确保云服务器 100% 稳定秒级连接
+def fetch_binance_super_reliable(interval, limit=120):
+    # 多通道智能故障转移，强制使用全球公开节点绕过所有限制
     urls = [
-        "https://data-api.binance.vision/fapi/v1/klines",
-        "https://fapi.binance.com/fapi/v1/klines",
-        "https://api.binance.com/api/v3/klines"
+        f"https://api1.binance.com/api/v3/klines?symbol=BTCUSDT&interval={interval}&limit={limit}",
+        f"https://api2.binance.com/api/v3/klines?symbol=BTCUSDT&interval={interval}&limit={limit}",
+        f"https://api3.binance.com/api/v3/klines?symbol=BTCUSDT&interval={interval}&limit={limit}",
+        f"https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval={interval}&limit={limit}"
     ]
-    params = {"symbol": "BTCUSDT", "interval": interval, "limit": limit}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     for url in urls:
         try:
-            r = requests.get(url, params=params, headers=headers, timeout=3)
+            r = requests.get(url, headers=headers, timeout=2.5)
             if r.status_code == 200:
                 res = r.json()
                 if isinstance(res, list) and len(res) > 0:
@@ -110,8 +110,8 @@ def monitor():
     lock = False
     while True:
         try:
-            p1m = fetch_binance_reliable("1m", 150)
-            p1h = fetch_binance_reliable("1h", 120)
+            p1m = fetch_binance_super_reliable("1m", 150)
+            p1h = fetch_binance_super_reliable("1h", 120)
             if p1m:
                 p = p1m[-1]
                 r1m = calc_rsi(p1m, 6)
@@ -125,14 +125,15 @@ def monitor():
                 e99 = calc_ema(p1h, 99) if p1h else e25
 
                 title = "⚡ 实时监控中 (安全观望)"
-                action = "观望中 — 等待 1m/10m RSI 极值共振"
+                action = "耐心等待极值共振点"
                 color = "#00ff41"
 
-                if r1m <= 15 and r10m <= 25:
+                # 高胜率双周期共振与 BOLL 轨道过滤逻辑
+                if r1m <= 15 and r10m <= 25 and p <= bdn * 1.002:
                     title = "🔥【S级绝杀·买入看涨 (UP)】"
                     action = "立刻开仓：买入看涨 (UP)！"
                     color = "#00ff41"
-                elif r1m >= 85 and r10m >= 75:
+                elif r1m >= 85 and r10m >= 75 and p >= bup * 0.998:
                     title = "🔥【S级绝杀·买入看跌 (DOWN)】"
                     action = "立刻开仓：买入看跌 (DOWN)！"
                     color = "#ff003c"
@@ -169,7 +170,7 @@ h2{color:#ffe600;text-align:center;margin-top:0;font-size:18px}
 <div class='row'><b>当前时段:</b> <span id='sn' style='color:#ffe600'>--</span></div>
 <div class='row'><b>信号状态:</b> <span id='t' style='color:#00ff41;font-weight:bold'>连接中...</span></div>
 <div class='row'><b>开单指令:</b> <span id='ac' style='color:#ffe600;font-weight:bold'>--</span></div>
-<div class='row'><b>BTC合约现价:</b> <span id='p' style='color:#ffe600;font-weight:bold;font-size:15px'>$0.00</span></div>
+<div class='row'><b>BTC现价:</b> <span id='p' style='color:#ffe600;font-weight:bold;font-size:15px'>$0.00</span></div>
 <div class='row'><b>BOLL 上/中/下:</b> <span id='b' style='color:#ff003c'>--</span></div>
 <div class='row'><b>EMA 7/25/99:</b> <span id='e' style='color:#00f3ff'>--</span></div>
 <div class='row'><b>1m RSI(6):</b> <span id='r1' style='color:#00ff41'>--</span></div>
@@ -200,7 +201,7 @@ def api_data():
 
 @app.route('/test')
 def test_push():
-    notify("🧪 暴爷测试", "多线路加速通道连接成功")
+    notify("🧪 暴爷测试", "多源直连通道连接成功")
     return "SUCCESS"
 
 if __name__ == "__main__":
