@@ -193,7 +193,7 @@ def monitor():
 
 threading.Thread(target=monitor, daemon=True).start()
 
-HTML_PAGE = (
+WEB_UI = (
     "<!DOCTYPE html><html><head><meta charset='utf-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
     "<title>暴爷无极限 ⚡ 绝杀终端</title>"
@@ -221,7 +221,7 @@ HTML_PAGE = (
 
 @app.route('/')
 def home():
-    return Response(HTML_PAGE, mimetype="text/html")
+    return Response(WEB_UI, mimetype="text/html")
 
 @app.route('/api/data')
 def api_data():
@@ -231,5 +231,5 @@ def api_data():
 def test_push():
     bj_time = get_beijing_time()
     s_name, s_adv, win_rate, _ = get_session_info()
-    t_msg = f"测试事件合约预警通知\n当前时段: {s_name} [{win_rate}]\n策略建议: {s_adv}\n时间: {bj_time}"
-    tg_ok, tg_info = send_t
+    t_msg = f"测试事件合约预警通知\n当前时段: {s_name} [{win_rate}]\n策略指导: {s_adv}\n时间: {bj_time}"
+    tg_ok, tg_info = send_tg(f"🧪
