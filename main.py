@@ -40,7 +40,7 @@ def get_session_info():
 def send_tg(msg):
     if TG_TOKEN and TG_CHAT:
         try:
-            requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", data={"chat_id": TG_CHAT, "text": msg}, timeout=3)
+            requests.post("https://api.telegram.org/bot" + TG_TOKEN + "/sendMessage", data={"chat_id": TG_CHAT, "text": msg}, timeout=3)
         except:
             pass
 
@@ -48,7 +48,7 @@ def send_webhook(title, content):
     if WEBHOOK_URL:
         try:
             url = WEBHOOK_URL.strip()
-            msg_text = f"⚡【暴爷无极限·事件合约绝杀预警】⚡\n{title}\n\n{content}"
+            msg_text = "⚡【暴爷无极限·事件合约绝杀预警】⚡\n" + title + "\n\n" + content
             payload = {"msg_type": "text", "content": {"text": msg_text}} if "feishu" in url or "larksuite" in url else {"msgtype": "text", "text": {"content": msg_text}}
             requests.post(url, json=payload, timeout=3)
         except:
@@ -56,8 +56,8 @@ def send_webhook(title, content):
 
 def notify(title, text):
     s_name, s_adv, win_rate, _ = get_session_info()
-    full_text = f"{text}\n\n🎯 推荐时段: {s_name} [{win_rate}]\n💡 策略指导: {s_adv}\n⏰ 时间: {get_beijing_time()}"
-    send_tg(f"{title}\n{full_text}")
+    full_text = text + "\n\n🎯 推荐时段: " + s_name + " [" + win_rate + "]\n💡 策略指导: " + s_adv + "\n⏰ 时间: " + get_beijing_time()
+    send_tg(title + "\n" + full_text)
     send_webhook(title, full_text)
 
 def calc_rsi_wilder(prices, period=6):
@@ -178,7 +178,7 @@ def monitor():
             }
             if "S级" in title or "A级" in title:
                 if not s_lock:
-                    notify(f"{title}", f"BTCUSDT 事件合约参考价: ${p}\nBOLL 上轨: ${boll_up} | 下轨: ${boll_dn}\n1m RSI: {r1} | 3m RSI: {r3}")
+                    notify(title, "BTCUSDT 事件合约参考价: $" + str(p) + "\nBOLL 上轨: $" + str(boll_up) + " | 下轨: $" + str(boll_dn) + "\n1m RSI: " + str(r1) + " | 3m RSI: " + str(r3))
                     s_lock = True
             else:
                 s_lock = False
@@ -188,30 +188,25 @@ def monitor():
 
 threading.Thread(target=monitor, daemon=True).start()
 
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>暴爷无极限 ⚡ 事件合约终端</title>
-<style>
-*{box-sizing:border-box}
-body{font-family:'Courier New',Consolas,monospace;padding:12px;background:#05070a;color:#00ff41;margin:0}
-body::before{content:"";position:fixed;top:0;left:0;width:100%;height:100%;background:linear-gradient(rgba(18,16,16,0) 50%,rgba(0,0,0,0.25) 50%);background-size:100% 4px;z-index:999;pointer-events:none}
-.terminal{background:#0c1017;padding:18px;border-radius:12px;max-width:440px;margin:10px auto;border:1px solid #00ff4155;box-shadow:0 0 25px rgba(0,255,65,0.25)}
-.header{text-align:center;border-bottom:1px dashed #00ff4155;padding-bottom:12px;margin-bottom:14px}
-.glitch-title{font-size:22px;font-weight:900;color:#ffe600;text-shadow:0 0 10px #ffe600,0 0 20px #ff003c;letter-spacing:1px}
-.sub-title{font-size:10px;color:#00f3ff;margin-top:5px;letter-spacing:1px}
-.session-card{background:#070a0f;padding:12px;border-radius:8px;margin-bottom:14px;border:1px solid #00f3ff44}
-.session-top{display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:bold}
-.session-desc{font-size:11px;color:#848e9c;margin-top:4px}
-.box{background:#070a0f;padding:14px;border-radius:8px;margin-bottom:14px;border-left:5px solid #00ff41}
-.title{font-size:11px;color:#848e9c;margin-bottom:4px}
-.val{font-size:14px;font-weight:bold;color:#fff}
-.price-row{display:flex;justify-content:space-between;align-items:center;background:#070a0f;padding:12px 16px;border-radius:8px;margin-bottom:14px;border:1px solid #00ff4144}
-.price-label{font-size:12px;color:#848e9c}
-.price-val{font-size:20px;font-weight:bold;color:#ffe600;text-shadow:0 0 8px #ffe60066}
-.indicator-section{background:#070a0f;padding:12px;border-radius:8px;margin-bottom:14px;border:1px solid #ffe60044}
-.ind-title{font-size:11px;color:#ffe600;font-weight:bold;margin-bottom:8px;text-align:center}
-.ind-grid{display:grid;grid-template-column
+HTML_TEMPLATE = (
+    "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<title>暴爷无极限 ⚡ 事件合约终端</title>"
+    "<style>"
+    "*{box-sizing:border-box}"
+    "body{font-family:'Courier New',Consolas,monospace;padding:12px;background:#05070a;color:#00ff41;margin:0}"
+    "body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;background:linear-gradient(rgba(18,16,16,0) 50%,rgba(0,0,0,0.25) 50%);background-size:100% 4px;z-index:999;pointer-events:none}"
+    ".terminal{background:#0c1017;padding:18px;border-radius:12px;max-width:440px;margin:10px auto;border:1px solid #00ff4155;box-shadow:0 0 25px rgba(0,255,65,0.25)}"
+    ".header{text-align:center;border-bottom:1px dashed #00ff4155;padding-bottom:12px;margin-bottom:14px}"
+    ".glitch-title{font-size:22px;font-weight:900;color:#ffe600;text-shadow:0 0 10px #ffe600,0 0 20px #ff003c;letter-spacing:1px}"
+    ".sub-title{font-size:10px;color:#00f3ff;margin-top:5px;letter-spacing:1px}"
+    ".session-card{background:#070a0f;padding:12px;border-radius:8px;margin-bottom:14px;border:1px solid #00f3ff44}"
+    ".session-top{display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:bold}"
+    ".session-desc{font-size:11px;color:#848e9c;margin-top:4px}"
+    ".box{background:#070a0f;padding:14px;border-radius:8px;margin-bottom:14px;border-left:5px solid #00ff41}"
+    ".title{font-size:11px;color:#848e9c;margin-bottom:4px}"
+    ".val{font-size:14px;font-weight:bold;color:#fff}"
+    ".price-row{display:flex;justify-content:space-between;align-items:center;background:#070a0f;padding:12px 16px;border-radius:8px;margin-bottom:14px;border:1px solid #00ff4144}"
+    ".price-label{font-size:12px;color:#848e9c}"
+    ".price-val{font-size:20px;font-weight:bold;color:#ffe600;text-shadow:0 0 8px #ffe60066}"
+    ".indicator-section{background:#070a0f;padding:12px;border-
