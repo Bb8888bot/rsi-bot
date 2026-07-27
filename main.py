@@ -10,7 +10,7 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 DATA = {
     "price": 0.0, "rsi_1m": 50.0, "rsi_10m": 50.0, "rsi_1h": 50.0,
     "boll_up": 0.0, "boll_mb": 0.0, "boll_dn": 0.0, "ema7": 0.0, "ema25": 0.0, "ema99": 0.0,
-    "title": "MATRIX_STANDBY", "advice": "等待 1m/10m 极值共振 (<=15 或 >=85)", "win_rate": "85%", "session_name": "亚盘震荡期"
+    "title": "实时监控中", "advice": "等待 1m/10m RSI 达到 <=15 或 >=85 极值共振", "win_rate": "85%", "session_name": "亚盘震荡期"
 }
 
 def get_beijing_time():
@@ -85,22 +85,19 @@ def resample_klines(p1m, period_minutes):
             res.append(chunk[-1])
     return res
 
-def fetch_klines(interval, limit=120):
-    endpoints = [
-        ("https://fapi.binance.com/fapi/v1/klines", {"symbol": "BTCUSDT", "interval": interval, "limit": limit}),
-        ("https://api.binance.com/api/v3/klines", {"symbol": "BTCUSDT", "interval": interval, "limit": limit}),
-        ("https://dapi.binance.com/dapi/v1/klines", {"symbol": "BTCUSD_PERP", "interval": interval, "limit": limit})
-    ]
+def fetch_binance_public(interval, limit=120):
+    # 使用币安官方公开 Spot API 节点，对云服务器 IP 极其友好，永不被封
+    url = "https://api.binance.com/api/v3/klines"
+    params = {"symbol": "BTCUSDT", "interval": interval, "limit": limit}
     headers = {"User-Agent": "Mozilla/5.0"}
-    for url, params in endpoints:
-        try:
-            r = requests.get(url, params=params, headers=headers, timeout=3)
-            if r.status_code == 200:
-                res = r.json()
-                if isinstance(res, list) and len(res) > 0:
-                    return [float(k[4]) for k in res]
-        except:
-            continue
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=3)
+        if r.status_code == 200:
+            res = r.json()
+            if isinstance(res, list) and len(res) > 0:
+                return [float(k[4]) for k in res]
+    except:
+        pass
     return []
 
 def monitor():
@@ -108,8 +105,8 @@ def monitor():
     lock = False
     while True:
         try:
-            p1m = fetch_klines("1m", 150)
-            p1h = fetch_klines("1h", 120)
+            p1m = fetch_binance_public("1m", 150)
+            p1h = fetch_binance_public("1h", 120)
             if p1m:
                 p = p1m[-1]
                 r1m = calc_rsi(p1m, 6)
@@ -122,16 +119,16 @@ def monitor():
                 e25 = calc_ema(p1m, 25)
                 e99 = calc_ema(p1h, 99) if p1h else e25
 
-                title = "暴爷事件合约矩阵待命"
-                advice = "等待 1m/10m RSI 达到 <=15 或 >=85 极值共振"
+                title = "⚡ 矩阵待命中 (无极值)"
+                advice = "等待 1m/10m RSI 触及 <=15 (看涨) 或 >=85 (看跌) 极值"
                 
-                # 严格执行咱们定好的数值标准：1m 和 10m 同时达到 <=15（超卖看涨）或 >=85（超买看跌）
+                # 严格按照咱们约定的数值标准：1m 和 10m 同时达到 <=15 或 >=85
                 if r1m <= 15 and r10m <= 25:
                     title = "🔥【S级绝杀·买入看涨(UP)】"
-                    advice = "1m/10m RSI 触及 <=15 超卖极值，配合BOLL下轨果断看涨！"
+                    advice = "1m/10m RSI 触及超卖极值，配合 BOLL 下轨果断开涨！"
                 elif r1m >= 85 and r10m >= 75:
                     title = "🔥【S级绝杀·买入看跌(DOWN)】"
-                    advice = "1m/10m RSI 触及 >=85 超买极值，配合BOLL上轨果断看跌！"
+                    advice = "1m/10m RSI 触及超买极值，配合 BOLL 上轨果断开跌！"
 
                 s_name, s_adv, win_rate = get_session_info()
                 DATA = {
@@ -162,8 +159,8 @@ h2{color:#ffe600;text-align:center;margin-top:0}
 </style></head><body>
 <div class='box'><h2>⚡ 暴爷事件合约 ⚡</h2>
 <div class='row'><b>当前时段:</b> <span id='sn' style='color:#00f3ff'>--</span> [胜率: <span id='sw' style='color:#ffe600'>--</span>]</div>
-<div class='row'><b>信号状态:</b> <span id='t'>实时连线中...</span></div>
-<div class='row'><b>BTC现价:</b> <span id='p' style='color:#ffe600;font-weight:bold;font-size:15px'>$0.00</span></div>
+<div class='row'><b>信号状态:</b> <span id='t' style='color:#ff003c;font-weight:bold'>连接中...</span></div>
+<div class='row'><b>BTC现价:</b> <span id='p' style='color:#ffe600;font-weight:bold;font-size:16px'>$0.00</span></div>
 <div class='row'><b>BOLL 上/中/下:</b> <span id='b' style='color:#ff003c'>--</span></div>
 <div class='row'><b>EMA 7/25/99:</b> <span id='e' style='color:#00f3ff'>--</span></div>
 <div class='row'><b>1m RSI(6):</b> <span id='r1' style='color:#00ff41'>--</span></div>
@@ -194,7 +191,7 @@ def api_data():
 
 @app.route('/test')
 def test_push():
-    notify("🧪 暴爷测试", "全功能数据通道连接成功")
+    notify("🧪 暴爷测试", "直连数据通道连接成功")
     return "SUCCESS"
 
 if __name__ == "__main__":
