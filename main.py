@@ -1,15 +1,11 @@
-import os, time, threading, requests, smtplib
-from email.mime.text import MIMEText
-from email.header import Header
-from email.utils import formataddr
+import os, time, threading, requests
 from flask import Flask, jsonify, Response
 
 app = Flask(__name__)
 
 TG_TOKEN = os.environ.get("BOT_TOKEN")
 TG_CHAT = os.environ.get("CHAT_ID")
-QQ_USER = os.environ.get("QQ_USER")
-QQ_PASS = os.environ.get("QQ_PASS")
+PP_TOKEN = os.environ.get("PUSHPLUS_TOKEN")
 
 DATA = {
     "price": 0.0, "rsi_1m": 50.0, "rsi_3m": 50.0, "rsi_5m": 50.0, "rsi_10m": 50.0, "rsi_1h": 50.0,
@@ -28,28 +24,28 @@ def send_tg(msg):
             return False, str(e)
     return False, "TG 未配置"
 
-def send_email(subject, content):
-    if not QQ_USER or not QQ_PASS:
-        return False, "QQ邮箱未配置"
+def send_wx(title, content):
+    if not PP_TOKEN:
+        return False, "PushPlus Token 未配置"
     try:
-        u = QQ_USER.strip()
-        p = QQ_PASS.strip()
-        m = MIMEText(content, "plain", "utf-8")
-        m["From"] = formataddr(("事件合约助手", u))
-        m["To"] = formataddr(("用户", u))
-        m["Subject"] = Header(subject, "utf-8")
-        s = smtplib.SMTP_SSL("smtp.qq.com", 465, timeout=8)
-        s.login(u, p)
-        s.sendmail(u, [u], m.as_string())
-        s.quit()
-        return True, "发送成功"
+        url = "http://www.pushplus.plus/send"
+        data = {
+            "token": PP_TOKEN.strip(),
+            "title": title,
+            "content": content.replace("\n", "<br>"),
+            "template": "html"
+        }
+        r = requests.post(url, json=data, timeout=5)
+        res = r.json()
+        if res.get("code") == 200:
+            return True, "发送成功"
+        return False, res.get("msg", "发送失败")
     except Exception as e:
         return False, str(e)
 
 def notify(title, text):
     send_tg(f"{title}\n{text}")
-    clean = text.replace("*", "").replace("`", "")
-    send_email(title, f"{title}\n\n{clean}\n\n时间: {get_beijing_time()}")
+    send_wx(title, f"{text}\n\n时间: {get_beijing_time()}")
 
 HTML_PAGE = """<!DOCTYPE html>
 <html>
@@ -121,12 +117,14 @@ def api_data():
 @app.route('/test')
 def test_push():
     bj_time = get_beijing_time()
-    t_msg = f"诊断测试\n时间: {bj_time}"
+    t_msg = f"测试事件合约消息通知\n测试时间: {bj_time}"
     tg_ok, tg_info = send_tg(f"🧪【测试】\n{t_msg}")
-    mail_ok, mail_info = send_email("🧪【测试】QQ邮箱连通性诊断", t_msg)
+    wx_ok, wx_info = send_wx("🧪【测试预警】微信通道连通性测试", t_msg)
+    
     tg_res = "✅ 成功" if tg_ok else f"❌ 失败 ({tg_info})"
-    mail_res = "✅ 成功" if mail_ok else f"❌ 失败 (原因: {mail_info})"
-    html = f"<html><body style='padding:20px;background:#181a20;color:#fff;'><h2>🧪 通道诊断结果</h2><p><b>1. TG:</b> {tg_res}</p><p><b>2. QQ邮箱:</b> {mail_res}</p><p>时间: {bj_time}</p></body></html>"
+    wx_res = "✅ 成功" if wx_ok else f"❌ 失败 (原因: {wx_info})"
+    
+    html = f"<html><body style='padding:20px;background:#181a20;color:#fff;'><h2>🧪 通道实时诊断结果</h2><p><b>1. Telegram:</b> {tg_res}</p><p><b>2. 微信弹窗:</b> {wx_res}</p><hr><p>时间: {bj_time}</p></body></html>"
     return Response(html, mimetype="text/html")
 
 def calc_rsi_wilder(prices, period=6):
