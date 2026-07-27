@@ -1,6 +1,7 @@
 import os, time, threading, requests, smtplib
 from email.mime.text import MIMEText
 from email.header import Header
+from email.utils import formataddr
 from flask import Flask, jsonify, Response
 
 app = Flask(__name__)
@@ -15,110 +16,48 @@ DATA = {
     "title": "初始化中", "advice": "正在同步事件合约数据源", "color": "#f0b90b", "time": "--"
 }
 
-# 强制校准北京时间 (UTC+8)
 def get_beijing_time():
     return time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() + 28800))
 
 def send_tg(msg):
     if TG_TOKEN and TG_CHAT:
         try:
-            requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", data={"chat_id": TG_CHAT, "text": msg}, timeout=5)
+            r = requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", data={"chat_id": TG_CHAT, "text": msg}, timeout=5)
+            return True, r.text
         except Exception as e:
-            print("TG Error:", e)
+            return False, str(e)
+    return False, "TG 环境变量未配置"
 
 def send_email(subject, content):
-    if QQ_USER and QQ_PASS:
-        try:
-            m = MIMEText(content, "plain", "utf-8")
-            m["From"] = Header(f"事件合约助手 <{QQ_USER}>", "utf-8")
-            m["To"] = Header(QQ_USER, "utf-8")
-            m["Subject"] = Header(subject, "utf-8")
-            s = smtplib.SMTP_SSL("smtp.qq.com", 465, timeout=5)
-            s.login(QQ_USER, QQ_PASS)
-            s.sendmail(QQ_USER, [QQ_USER], m.as_string())
-            s.quit()
-        except Exception as e:
-            print("Email Error:", e)
+    if not QQ_USER or not QQ_PASS:
+        return False, "环境变量 QQ_USER 或 QQ_PASS 未配置"
+    try:
+        user_clean = QQ_USER.strip()
+        pass_clean = QQ_PASS.strip()
+
+        m = MIMEText(content, "plain", "utf-8")
+        m["From"] = formataddr(("事件合约助手", user_clean))
+        m["To"] = formataddr(("用户", user_clean))
+        m["Subject"] = Header(subject, "utf-8")
+
+        s = smtplib.SMTP_SSL("smtp.qq.com", 465, timeout=10)
+        s.login(user_clean, pass_clean)
+        s.sendmail(user_clean, [user_clean], m.as_string())
+        s.quit()
+        return True, "发送成功"
+    except Exception as e:
+        err = str(e)
+        print("Email Error:", err)
+        return False, err
 
 def notify(title, text):
     send_tg(f"{title}\n{text}")
     clean = text.replace("*", "").replace("`", "")
     send_email(title, f"{title}\n\n{clean}\n\n北京时间: {get_beijing_time()}")
 
-# 币安官方 Wilder 平滑 RMA 算法
-def calc_rsi_wilder(prices, period=6):
-    if len(prices) < period + 1:
-        return 50.0
-    gains, losses = [], []
-    for i in range(1, len(prices)):
-        d = prices[i] - prices[i-1]
-        gains.append(d if d > 0 else 0.0)
-        losses.append(abs(d) if d < 0 else 0.0)
-    
-    avg_g = sum(gains[:period]) / period
-    avg_l = sum(losses[:period]) / period
-    for i in range(period, len(gains)):
-        avg_g = (avg_g * (period - 1) + gains[i]) / period
-        avg_l = (avg_l * (period - 1) + losses[i]) / period
-        
-    if avg_l == 0:
-        return 100.0
-    rs = avg_g / avg_l
-    return round(100.0 - (100.0 / (1.0 + rs)), 2)
+# ----------------- 1. 优先注册网页路由 (彻底解决 404) -----------------
 
-def agg_klines(res, ms):
-    g = {}
-    for k in res:
-        g[k[0] // ms] = float(k[4])
-    return list(g.values())
-
-def fetch_data():
-    urls = [
-        "https://data-api.binance.vision/api/v3/klines",
-        "https://api.binance.com/api/v3/klines",
-        "https://api1.binance.com/api/v3/klines"
-    ]
-    headers = {"User-Agent": "Mozilla/5.0"}
-    res = None
-    for u in urls:
-        try:
-            # 抓取 1000 根数据深度，确保 Wilder 算法完全收敛
-            r = requests.get(u, params={"symbol": "BTCUSDT", "interval": "1m", "limit": 1000}, headers=headers, timeout=3)
-            if r.status_code == 200:
-                res = r.json()
-                break
-        except:
-            continue
-    if not res:
-        raise Exception("连接行情超时")
-
-    p1m = [float(k[4]) for k in res]
-    price = p1m[-1]
-    
-    r1m = calc_rsi_wilder(p1m, 6)
-    r3m = calc_rsi_wilder(agg_klines(res, 180000), 6)
-    r5m = calc_rsi_wilder(agg_klines(res, 300000), 6)
-    r10m = calc_rsi_wilder(agg_klines(res, 600000), 6)
-    r1h = calc_rsi_wilder(agg_klines(res, 3600000), 6)
-    
-    return price, r1m, r3m, r5m, r10m, r1h
-
-def analyze(price, r1m, r3m, r5m, r10m, r1h):
-    if r1h >= 50 and r10m <= 30 and r1m <= 15:
-        return "【85%+高胜率】趋势向上+超卖共振", "强烈建议：买入看涨 (UP)", "#10b981"
-    if r1h <= 50 and r10m >= 70 and r1m >= 85:
-        return "【85%+高胜率】趋势向下+超买共振", "强烈建议：买入看跌 (DOWN)", "#ef4444"
-    if r1m <= 15 and r3m <= 20 and r5m <= 25:
-        return "【短线三重超卖】1m/3m/5m插针", "建议：抓短线反弹 (UP)", "#10b981"
-    if r1m >= 85 and r3m >= 80 and r5m >= 75:
-        return "【短线三重超买】1m/3m/5m拉升", "建议：抓短线回撤 (DOWN)", "#ef4444"
-    if r1m >= 85 or r10m >= 85:
-        return "触发极度超买警戒 (>=85)", "谨防见顶急跌，可小仓看跌 (DOWN)", "#f97316"
-    if r1m <= 15 or r10m <= 15:
-        return "触发极度超卖警戒 (<=15)", "谨防快速回升，可小仓看涨 (UP)", "#3b82f6"
-    return "事件合约常态运转中", "建议观望，等待>85或<15极值信号", "#848e9c"
-
-HTML = """<!DOCTYPE html>
+HTML_PAGE = """<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -179,11 +118,109 @@ setInterval(up,1000);up();
 
 @app.route('/')
 def home():
-    return Response(HTML, mimetype="text/html")
+    return Response(HTML_PAGE, mimetype="text/html")
 
 @app.route('/api/data')
 def api_data():
     return jsonify(DATA)
+
+@app.route('/test')
+def test_push():
+    bj_time = get_beijing_time()
+    test_msg = f"测试消息\n测试时间: {bj_time}"
+    tg_ok, tg_info = send_tg(f"🧪 【手动测试】\n{test_msg}")
+    mail_ok, mail_info = send_email("🧪 【测试预警】QQ邮箱连通性测试", test_msg)
+    
+    tg_result = "<span style='color:green;'>✅ 成功</span>" if tg_ok else f"<span style='color:red;'>❌ 失败 ({tg_info})</span>"
+    mail_result = "<span style='color:green;'>✅ 成功</span>" if mail_ok else f"<span style='color:red;'>❌ 失败 (原因: {mail_info})</span>"
+    
+    html = f"""
+    <html>
+    <body style="font-family:sans-serif;padding:20px;background:#181a20;color:#fff;">
+        <h2>🧪 消息通道实时诊断结果</h2>
+        <hr>
+        <p><b>1. Telegram 推送：</b> {tg_result}</p>
+        <p><b>2. QQ 邮箱推送：</b> {mail_result}</p>
+        <hr>
+        <p style="color:#848e9c;">测试时间: {bj_time}</p>
+        <p style="font-size:12px;color:#f0b90b;">提示：如果 QQ 邮箱提示 Auth failed，请检查 Render 里的 QQ_PASS 是否为 16 位授权码。</p>
+    </body>
+    </html>
+    """
+    return Response(html, mimetype="text/html")
+
+# ----------------- 2. 核心行情与算法 -----------------
+
+def calc_rsi_wilder(prices, period=6):
+    if len(prices) < period + 1:
+        return 50.0
+    gains, losses = [], []
+    for i in range(1, len(prices)):
+        d = prices[i] - prices[i-1]
+        gains.append(d if d > 0 else 0.0)
+        losses.append(abs(d) if d < 0 else 0.0)
+    
+    avg_g = sum(gains[:period]) / period
+    avg_l = sum(losses[:period]) / period
+    for i in range(period, len(gains)):
+        avg_g = (avg_g * (period - 1) + gains[i]) / period
+        avg_l = (avg_l * (period - 1) + losses[i]) / period
+        
+    if avg_l == 0:
+        return 100.0
+    rs = avg_g / avg_l
+    return round(100.0 - (100.0 / (1.0 + rs)), 2)
+
+def agg_klines(res, ms):
+    g = {}
+    for k in res:
+        g[k[0] // ms] = float(k[4])
+    return list(g.values())
+
+def fetch_data():
+    urls = [
+        "https://data-api.binance.vision/api/v3/klines",
+        "https://api.binance.com/api/v3/klines",
+        "https://api1.binance.com/api/v3/klines"
+    ]
+    headers = {"User-Agent": "Mozilla/5.0"}
+    res = None
+    for u in urls:
+        try:
+            r = requests.get(u, params={"symbol": "BTCUSDT", "interval": "1m", "limit": 1000}, headers=headers, timeout=3)
+            if r.status_code == 200:
+                res = r.json()
+                break
+        except:
+            continue
+    if not res:
+        raise Exception("连接行情超时")
+
+    p1m = [float(k[4]) for k in res]
+    price = p1m[-1]
+    
+    r1m = calc_rsi_wilder(p1m, 6)
+    r3m = calc_rsi_wilder(agg_klines(res, 180000), 6)
+    r5m = calc_rsi_wilder(agg_klines(res, 300000), 6)
+    r10m = calc_rsi_wilder(agg_klines(res, 600000), 6)
+    r1h = calc_rsi_wilder(agg_klines(res, 3600000), 6)
+    
+    return price, r1m, r3m, r5m, r10m, r1h
+
+def analyze(price, r1m, r3m, r5m, r10m, r1h):
+    if r1h >= 50 and r10m <= 30 and r1m <= 15:
+        return "【85%+高胜率】趋势向上+超卖共振", "强烈建议：买入看涨 (UP)", "#10b981"
+    if r1h <= 50 and r10m >= 70 and r1m >= 85:
+        return "【85%+高胜率】趋势向下+超买共振", "强烈建议：买入看跌 (DOWN)", "#ef4444"
+    if r1m <= 15 and r3m <= 20 and r5m <= 25:
+        return "【短线三重超卖】1m/3m/5m插针", "建议：抓短线反弹 (UP)", "#10b981"
+    if r1m >= 85 and r3m >= 80 and r5m >= 75:
+        return "【短线三重超买】1m/3m/5m拉升", "建议：抓短线回撤 (DOWN)", "#ef4444"
+    if r1m >= 85 or r10m >= 85:
+        return "触发极度超买警戒 (>=85)", "谨防见顶急跌，可小仓看跌 (DOWN)", "#f97316"
+    if r1m <= 15 or r10m <= 15:
+        return "触发极度超卖警戒 (<=15)", "谨防快速回升，可小仓看涨 (UP)", "#3b82f6"
+    return "事件合约常态运转中", "建议观望，等待>85或<15极值信号", "#848e9c"
 
 def monitor():
     global DATA
@@ -222,15 +259,4 @@ def monitor():
             elif r1h <= 50 and r10 >= 70 and r1 >= 85 and not s_combo:
                 notify("🔥【85%+高胜率信号】买入看跌 (DOWN)！", f"参考价: ${p}\n1h: {r1h} | 10m: {r10} | 1m: {r1}")
                 s_combo = True
-            elif (20 < r1 < 80) and (35 < r10 < 65):
-                s_combo = False
-
-        except Exception as e:
-            print("Monitor error:", e)
-        time.sleep(1)
-
-threading.Thread(target=monitor, daemon=True).start()
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+            elif (20 < r
