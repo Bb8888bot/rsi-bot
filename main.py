@@ -1,4 +1,4 @@
-import os, time, threading, requests
+import os, time, threading, requests, urllib.parse
 from flask import Flask, jsonify, Response
 
 app = Flask(__name__)
@@ -10,7 +10,7 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 DATA = {
     "price": 0.0, "rsi_1m": 50.0, "rsi_10m": 50.0, "rsi_1h": 50.0,
     "boll_up": 0.0, "boll_mb": 0.0, "boll_dn": 0.0, "ema7": 0.0, "ema25": 0.0, "ema99": 0.0,
-    "title": "⚡ 代理通道连接中", "action": "等待实时行情注入", "color": "#00ff41",
+    "title": "⚡ 中继代理连接中", "action": "实时监控中 — 等待极值共振", "color": "#00ff41",
     "bj_time": "--", "session_name": "--"
 }
 
@@ -78,24 +78,21 @@ def calc_ema(prices, period):
         ema = (p * k) + (ema * (1 - k))
     return round(ema, 2)
 
-def resample_klines(p1m, period_minutes):
-    res = []
-    for i in range(0, len(p1m), period_minutes):
-        chunk = p1m[i:i+period_minutes]
-        if chunk:
-            res.append(chunk[-1])
-    return res
-
-def fetch_proxy_btc():
-    proxies_endpoints = [
-        "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=100",
-        "https://api1.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=100",
-        "https://dapi.binance.com/dapi/v1/klines?symbol=BTCUSD_PERP&interval=1m&limit=100"
+def fetch_binance_via_proxy(interval, limit=100):
+    target_url = f"https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval={interval}&limit={limit}"
+    encoded_target = urllib.parse.quote(target_url, safe='')
+    
+    # 采用全球免封锁多重中继代理通道
+    proxy_urls = [
+        f"https://api.allorigins.win/raw?url={encoded_target}",
+        f"https://corsproxy.io/?{urllib.parse.quote(target_url)}",
+        f"https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval={interval}&limit={limit}"
     ]
+    
     headers = {"User-Agent": "Mozilla/5.0"}
-    for url in proxies_endpoints:
+    for p_url in proxy_urls:
         try:
-            r = requests.get(url, headers=headers, timeout=3)
+            r = requests.get(p_url, headers=headers, timeout=4)
             if r.status_code == 200:
                 res = r.json()
                 if isinstance(res, list) and len(res) > 0:
@@ -109,21 +106,20 @@ def monitor():
     lock = False
     while True:
         try:
-            p1m = fetch_proxy_btc()
-            if p1m and len(p1m) > 20:
+            p1m = fetch_binance_via_proxy("1m", 100)
+            p10m = fetch_binance_via_proxy("10m", 100)
+            p1h = fetch_binance_via_proxy("1h", 100)
+
+            if p1m:
                 p = p1m[-1]
                 r1m = calc_rsi(p1m, 6)
-                
-                p10m = resample_klines(p1m, 10)
-                r10m = calc_rsi(p10m, 6) if len(p10m) > 7 else r1m
-                
-                p1h = resample_klines(p1m, 60)
-                r1h = calc_rsi(p1h, 6) if len(p1h) > 7 else r1m
+                r10m = calc_rsi(p10m, 6) if p10m else r1m
+                r1h = calc_rsi(p1h, 6) if p1h else r1m
 
                 bup, bmb, bdn = calc_boll(p1m, 20)
                 e7 = calc_ema(p1m, 7)
                 e25 = calc_ema(p1m, 25)
-                e99 = calc_ema(p1m, 99)
+                e99 = calc_ema(p1h, 99) if p1h else e25
 
                 title = "⚡ 实时监控中 (高胜率守护)"
                 action = "耐心等待 1m/10m 极值共振点"
