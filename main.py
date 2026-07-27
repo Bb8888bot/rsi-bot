@@ -1,19 +1,20 @@
-import os, time, threading, requests, smtplib, collections
+import os
+import time
+import threading
+import requests
+import smtplib
+import collections
 from email.mime.text import MIMEText
 from email.header import Header
 from flask import Flask, jsonify, Response
 
 app = Flask(__name__)
 
-# 1. Telegram 配置
 TELEGRAM_BOT_TOKEN = os.environ.get("BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("CHAT_ID")
-
-# 2. QQ 邮箱配置
 QQ_USER = os.environ.get("QQ_USER")
 QQ_PASS = os.environ.get("QQ_PASS")
 
-# 全局内存缓存
 LATEST_DATA = {
     "price": 0.0,
     "rsi_1m": 0.0,
@@ -21,15 +22,11 @@ LATEST_DATA = {
     "rsi_5m": 0.0,
     "rsi_10m": 0.0,
     "rsi_1h": 0.0,
-    "signal_title": "初始化中...",
-    "advice": "正在连接事件合约数据源",
+    "signal_title": "初始化中",
+    "advice": "正在连接事件合约行情源",
     "color": "#f0b90b",
     "update_time": "--"
 }
-
-PRICE_HISTORY = collections.deque(maxlen=10)
-
-# ----------------- 推送模块 -----------------
 
 def send_tg(msg):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -44,10 +41,10 @@ def send_email(subject, content):
     if not QQ_USER or not QQ_PASS:
         return
     try:
-        message = MIMEText(content, 'plain', 'utf-8')
-        message['From'] = Header(f"事件合约助手 <{QQ_USER}>", 'utf-8')
-        message['To'] = Header(QQ_USER, 'utf-8')
-        message['Subject'] = Header(subject, 'utf-8')
+        message = MIMEText(content, "plain", "utf-8")
+        message["From"] = Header(f"事件合约助手 <{QQ_USER}>", "utf-8")
+        message["To"] = Header(QQ_USER, "utf-8")
+        message["Subject"] = Header(subject, "utf-8")
 
         server = smtplib.SMTP_SSL("smtp.qq.com", 465, timeout=5)
         server.login(QQ_USER, QQ_PASS)
@@ -59,14 +56,12 @@ def send_email(subject, content):
 
 def notify(title, detail_text):
     send_tg(f"{title}\n{detail_text}")
-    clean_text = detail_text.replace('*', '').replace('`', '')
+    clean_text = detail_text.replace("*", "").replace("`", "")
     send_email(title, f"{title}\n\n{clean_text}\n\n发送时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-
-# ----------------- 计算模块 -----------------
 
 def calc_rsi(prices, period=6):
     if len(prices) < period + 1:
-        return None
+        return 50.0
     gains, losses = [], []
     for i in range(1, len(prices)):
         diff = prices[i] - prices[i-1]
@@ -113,37 +108,34 @@ def get_full_market_data():
 
 def analyze_all_indicators(price, rsi_1m, rsi_3m, rsi_5m, rsi_10m, rsi_1h):
     if not all([rsi_1m, rsi_3m, rsi_5m, rsi_10m, rsi_1h]):
-        return "数据计算中...", "等待数据完整接入", "#f0b90b"
+        return "数据计算中", "等待数据接入", "#f0b90b"
     
     if rsi_1h >= 50 and rsi_10m <= 30 and rsi_1m <= 15:
-        return "🔥【85%+ 高胜率】大趋势向上 + 10m/1m 深度超卖共振！", "强烈建议：买入看涨 (UP)", "#10b981"
+        return "【85%+ 高胜率】大趋势向上 + 10m/1m 深度超卖共振！", "强烈建议：买入看涨 (UP)", "#10b981"
     elif rsi_1h <= 50 and rsi_10m >= 70 and rsi_1m >= 85:
-        return "🔥【85%+ 高胜率】大趋势向下 + 10m/1m 深度超买共振！", "强烈建议：买入看跌 (DOWN)", "#ef4444"
+        return "【85%+ 高胜率】大趋势向下 + 10m/1m 深度超买共振！", "强烈建议：买入看跌 (DOWN)", "#ef4444"
     elif rsi_1m <= 15 and rsi_3m <= 20 and rsi_5m <= 25:
-        return "⚡【短线三重超卖】1m/3m/5m 联合插针！", "建议：抓短线强反弹 (UP)", "#10b981"
+        return "【短线三重超卖】1m/3m/5m 联合插针！", "建议：抓短线强反弹 (UP)", "#10b981"
     elif rsi_1m >= 85 and rsi_3m >= 80 and rsi_5m >= 75:
-        return "⚡【短线三重超买】1m/3m/5m 联合拉升！", "建议：抓短线强回撤 (DOWN)", "#ef4444"
+        return "【短线三重超买】1m/3m/5m 联合拉升！", "建议：抓短线强回撤 (DOWN)", "#ef4444"
     elif rsi_1m >= 85 or rsi_10m >= 85:
-        return "⚠️ 事件合约触发极度超买警戒 (≥ 85)", "谨防见顶急跌，可小仓买入看跌 (DOWN)", "#f97316"
+        return "事件合约触发极度超买警戒 (≥ 85)", "谨防见顶急跌，可小仓买入看跌 (DOWN)", "#f97316"
     elif rsi_1m <= 15 or rsi_10m <= 15:
-        return "💡 事件合约触发极度超卖警戒 (≤ 15)", "谨防快速回升，可小仓买入看涨 (UP)", "#3b82f6"
+        return "事件合约触发极度超卖警戒 (≤ 15)", "谨防快速回升，可小仓买入看涨 (UP)", "#3b82f6"
     else:
-        return "⏳ 事件合约常态运转中", "建议观望，等待 >85 或 <15 极值信号", "#848e9c"
-
-# ----------------- 原生 Web 界面 -----------------
+        return "事件合约常态运转中", "建议观望，等待 >85 或 <15 极值信号", "#848e9c"
 
 HTML_CONTENT = """<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BTC 事件合约专属终端</title>
+    <title>BTC 事件合约终端</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 15px; background: #0b0e11; color: #eaecef; }
-        .card { background: #181a20; padding: 20px; border-radius: 16px; max-width: 420px; margin: 10px auto; border: 1px solid #2b2f36; box-shadow: 0 4px 20px rgba(0,0,0,0.6); }
-        h2 { margin-top: 0; color: #f0b90b; font-size: 18px; text-align: center; }
-        .badge { background: #00c076; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 4px; vertical-align: middle; }
-        .box { background: #2b2f36; padding: 14px; border-radius: 12px; margin: 15px 0; border-left: 5px solid #f0b90b; transition: all 0.3s; }
+        body { font-family: sans-serif; padding: 15px; background: #0b0e11; color: #eaecef; }
+        .card { background: #181a20; padding: 20px; border-radius: 16px; max-width: 420px; margin: 10px auto; border: 1px solid #2b2f36; }
+        h2 { color: #f0b90b; font-size: 18px; text-align: center; margin-top:0; }
+        .box { background: #2b2f36; padding: 14px; border-radius: 12px; margin: 15px 0; border-left: 5px solid #f0b90b; }
         .box-title { font-size: 13px; color: #848e9c; margin-bottom: 4px; }
         .box-val { font-size: 15px; font-weight: bold; }
         .item { display: flex; justify-content: space-between; margin: 10px 0; font-size: 14px; border-bottom: 1px dashed #2b2f36; padding-bottom: 6px; }
@@ -156,65 +148,53 @@ HTML_CONTENT = """<!DOCTYPE html>
 </head>
 <body>
     <div class="card">
-        <h2>⚡ BTC 事件合约专属终端 <span class="badge">1s 极速</span></h2>
+        <h2>⚡ BTC 事件合约终端</h2>
         <div class="box" id="signal-box">
             <div class="box-title" id="signal-title">加载中...</div>
             <div class="box-val" id="signal-advice">正在连接数据源...</div>
         </div>
         <div class="item"><span>事件合约参考价</span><span class="val" id="price">$0.00</span></div>
-        
         <div class="grid">
             <div class="grid-box"><div>1m RSI(6)</div><div class="grid-val" id="rsi-1m">--</div></div>
             <div class="grid-box"><div>3m RSI(6)</div><div class="grid-val" id="rsi-3m">--</div></div>
             <div class="grid-box"><div>5m RSI(6)</div><div class="grid-val" id="rsi-5m">--</div></div>
             <div class="grid-box"><div>10m RSI(6)</div><div class="grid-val" id="rsi-10m">--</div></div>
         </div>
-        
         <div class="item" style="margin-top:15px;"><span>1h RSI(6) [大趋势]</span><span class="val" id="rsi-1h">--</span></div>
-        <div class="time">更新时间: <span id="update-time">--</span><br>(币安事件合约底层现货行情源)</div>
+        <div class="time">更新时间: <span id="update-time">--</span></div>
     </div>
-
     <script>
-        async function fetchMarketData() {
-            try {
-                const res = await fetch('/api/data');
-                const data = await res.json();
-                
-                document.getElementById('price').innerText = '$' + Number(data.price).toLocaleString('en-US', {minimumFractionDigits: 2});
+        function updateData() {
+            fetch('/api/data').then(r => r.json()).then(data => {
+                document.getElementById('price').innerText = '$' + data.price.toFixed(2);
                 document.getElementById('rsi-1m').innerText = data.rsi_1m;
                 document.getElementById('rsi-3m').innerText = data.rsi_3m;
                 document.getElementById('rsi-5m').innerText = data.rsi_5m;
                 document.getElementById('rsi-10m').innerText = data.rsi_10m;
                 document.getElementById('rsi-1h').innerText = data.rsi_1h;
-                
                 document.getElementById('signal-title').innerText = data.signal_title;
                 document.getElementById('signal-advice').innerText = data.advice;
                 document.getElementById('signal-advice').style.color = data.color;
                 document.getElementById('signal-box').style.borderLeftColor = data.color;
                 document.getElementById('update-time').innerText = data.update_time;
-            } catch (e) {
-                console.error("刷新失败:", e);
-            }
+            }).catch(e => console.log(e));
         }
-        setInterval(fetchMarketData, 1000);
-        fetchMarketData();
+        setInterval(updateData, 1000);
+        updateData();
     </script>
 </body>
 </html>"""
 
 @app.route('/')
 def home():
-    return Response(HTML_CONTENT, mimetype='text/html')
+    return Response(HTML_CONTENT, mimetype="text/html")
 
 @app.route('/api/data')
 def api_data():
     return jsonify(LATEST_DATA)
 
-# ----------------- 后台监控 -----------------
-
 def monitor():
-    global LATEST_DATA, PRICE_HISTORY
-    
+    global LATEST_DATA
     s_1m_high, s_1m_low = False, False
     s_10m_high, s_10m_low = False, False
     s_combo = False
@@ -238,8 +218,23 @@ def monitor():
                 "update_time": now_str
             }
 
-            # 1m RSI 预警
-            if rsi_1m and rsi_1m >= 85 and not s_1m_high:
-                notify("🚨 【事件合约预警】BTC 1m RSI 极度超买！", f"参考价格: `${price}`\n1m RSI(6): *{rsi_1m}* (≥ 85)\n👉 提示：1分钟急剧冲高，谨防见顶回撤！")
+            if rsi_1m >= 85 and not s_1m_high:
+                notify("🚨 【事件合约预警】BTC 1m RSI 极度超买！", f"参考价格: `${price}`\n1m RSI(6): *{rsi_1m}* (≥ 85)")
                 s_1m_high = True
-            elif rsi_1m and rsi_1m <= 15 an
+            elif rsi_1m <= 15 and not s_1m_low:
+                notify("🟢 【事件合约预警】BTC 1m RSI 极度超卖！", f"参考价格: `${price}`\n1m RSI(6): *{rsi_1m}* (≤ 15)")
+                s_1m_low = True
+            elif 25 < rsi_1m < 75:
+                s_1m_high, s_1m_low = False, False
+
+            if rsi_10m >= 85 and not s_10m_high:
+                notify("🚨 【事件合约重磅】BTC 10m RSI 极度超买！", f"参考价格: `${price}`\n10m RSI(6): *{rsi_10m}* (≥ 85)")
+                s_10m_high = True
+            elif rsi_10m <= 15 and not s_10m_low:
+                notify("🟢 【事件合约重磅】BTC 10m RSI 极度超卖！", f"参考价格: `${price}`\n10m RSI(6): *{rsi_10m}* (≤ 15)")
+                s_10m_low = True
+            elif 25 < rsi_10m < 75:
+                s_10m_high, s_10m_low = False, False
+
+            if rsi_1h >= 50 and rsi_10m <= 30 and rsi_1m <= 15 and not s_combo:
+                notify("🔥【85%+ 高胜率信号】买入看涨 (UP)！", f"参考价格: `${price}`\n1h: {rs
