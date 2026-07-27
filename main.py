@@ -30,15 +30,12 @@ def get_session_info():
         if hour == 8 and minute < 30:
             return "早八交割期 [HIGH_VOL]", "高频插针，建议 08:30 后入场", "胜率: 68%", "#f97316"
         return "亚盘黄金震荡期 [ACCURATE]", "指标极少钝化，极其适合 BOLL+RSI 高抛低吸", "胜率: 85%", "#00ff41"
-
     elif 15 <= hour < 19:
         return "欧盘趋势启动期 [TREND]", "方向明确，适合抓 BOLL 轨外共振反弹", "胜率: 88%", "#00f3ff"
-
     elif 20 <= hour < 24:
         if hour == 20 or (hour == 21 and minute <= 30):
             return "美盘数据敏感期 [VOLATILE]", "剧烈波动，严禁单边逆势，只做 S 级共振！", "胜率: 78%", "#ff003c"
         return "美盘黄金交易期 [KING_MODE]", "顶级流动性，顺势共振信号胜率之王", "胜率: 92%+", "#00ff41"
-
     else:
         return "深夜低量横盘期 [LOW_VOL]", "量能清淡，只做 BOLL 上下轨极值", "胜率: 75%", "#848e9c"
 
@@ -224,7 +221,6 @@ HTML_PAGE = """<!DOCTYPE html>
 <style>
 *{box-sizing:border-box}
 body{font-family:'Courier New',Consolas,monospace;padding:12px;background:#05070a;color:#00ff41;margin:0;overflow-x:hidden}
-body::before{content:"";position:fixed;top:0;left:0;width:100%;height:100%;background:linear-gradient(rgba(18,16,16,0) 50%,rgba(0,0,0,0.25) 50%);background-size:100% 4px;z-index:999;pointer-events:none}
 .terminal{background:#0c1017;padding:20px;border-radius:12px;max-width:440px;margin:10px auto;border:1px solid #00ff4155;box-shadow:0 0 20px rgba(0,255,65,0.2)}
 .header{text-align:center;border-bottom:1px dashed #00ff4155;padding-bottom:12px;margin-bottom:15px}
 .glitch-title{font-size:24px;font-weight:900;color:#ffe600;text-shadow:0 0 10px #ffe600,0 0 20px #ff003c;letter-spacing:2px;margin:0}
@@ -237,4 +233,7 @@ body::before{content:"";position:fixed;top:0;left:0;width:100%;height:100%;backg
 .val{font-size:14px;font-weight:bold;color:#fff}
 .price-row{display:flex;justify-content:space-between;align-items:center;background:#070a0f;padding:12px 16px;border-radius:8px;margin-bottom:15px;border:1px solid #00ff4144}
 .price-label{font-size:12px;color:#848e9c}
-.price-val{font-size:20px;font-weight:bold;color:#ffe600;text-shadow:0 0 8p
+.price-val{font-size:20px;font-weight:bold;color:#ffe600;text-shadow:0 0 8px #ffe60066}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.gbox{background:#070a0f;padding:10px;border-radius:6px;text-align:center;border:1px solid #00ff4133}
+.gname{font-s
