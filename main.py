@@ -10,7 +10,7 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 DATA = {
     "price": 0.0, "rsi_1m": 50.0, "rsi_10m": 50.0, "rsi_1h": 50.0,
     "boll_up": 0.0, "boll_mb": 0.0, "boll_dn": 0.0, "ema7": 0.0, "ema25": 0.0, "ema99": 0.0,
-    "title": "⚡ 币安同源同步中", "action": "高精度极值共振监控中", "color": "#00ff41",
+    "title": "⚡ 代理通道连接中", "action": "等待实时行情注入", "color": "#00ff41",
     "bj_time": "--", "session_name": "--"
 }
 
@@ -53,16 +53,12 @@ def calc_rsi(prices, period=6):
     gains, losses = 0.0, 0.0
     for i in range(1, len(prices)):
         d = prices[i] - prices[i-1]
-        if d > 0:
-            gains += d
-        else:
-            losses += abs(d)
+        if d > 0: gains += d
+        else: losses += abs(d)
     avg_g = gains / period
     avg_l = losses / period
-    if avg_l == 0:
-        return 100.0
-    rs = avg_g / avg_l
-    return round(100.0 - (100.0 / (1.0 + rs)), 2)
+    if avg_l == 0: return 100.0
+    return round(100.0 - (100.0 / (1.0 + (avg_g / avg_l))), 2)
 
 def calc_boll(prices, period=20):
     if len(prices) < period:
@@ -82,16 +78,24 @@ def calc_ema(prices, period):
         ema = (p * k) + (ema * (1 - k))
     return round(ema, 2)
 
-def fetch_direct_klines(interval, limit=100):
-    urls = [
-        f"https://api1.binance.com/api/v3/klines?symbol=BTCUSDT&interval={interval}&limit={limit}",
-        f"https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval={interval}&limit={limit}",
-        f"https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval={interval}&limit={limit}"
+def resample_klines(p1m, period_minutes):
+    res = []
+    for i in range(0, len(p1m), period_minutes):
+        chunk = p1m[i:i+period_minutes]
+        if chunk:
+            res.append(chunk[-1])
+    return res
+
+def fetch_proxy_btc():
+    proxies_endpoints = [
+        "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=100",
+        "https://api1.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=100",
+        "https://dapi.binance.com/dapi/v1/klines?symbol=BTCUSD_PERP&interval=1m&limit=100"
     ]
     headers = {"User-Agent": "Mozilla/5.0"}
-    for url in urls:
+    for url in proxies_endpoints:
         try:
-            r = requests.get(url, headers=headers, timeout=2.5)
+            r = requests.get(url, headers=headers, timeout=3)
             if r.status_code == 200:
                 res = r.json()
                 if isinstance(res, list) and len(res) > 0:
@@ -105,27 +109,26 @@ def monitor():
     lock = False
     while True:
         try:
-            # 分别直接拉取 1m、10m、1h 官方标准 K 线，保证与币安盘面计算口径 100% 一致
-            p1m = fetch_direct_klines("1m", 100)
-            p10m = fetch_direct_klines("10m", 100)
-            p1h = fetch_direct_klines("1h", 100)
-
-            if p1m and p10m:
+            p1m = fetch_proxy_btc()
+            if p1m and len(p1m) > 20:
                 p = p1m[-1]
                 r1m = calc_rsi(p1m, 6)
-                r10m = calc_rsi(p10m, 6)
-                r1h = calc_rsi(p1h, 6) if p1h else r1m
+                
+                p10m = resample_klines(p1m, 10)
+                r10m = calc_rsi(p10m, 6) if len(p10m) > 7 else r1m
+                
+                p1h = resample_klines(p1m, 60)
+                r1h = calc_rsi(p1h, 6) if len(p1h) > 7 else r1m
 
                 bup, bmb, bdn = calc_boll(p1m, 20)
                 e7 = calc_ema(p1m, 7)
                 e25 = calc_ema(p1m, 25)
-                e99 = calc_ema(p1h, 99) if p1h else e25
+                e99 = calc_ema(p1m, 99)
 
                 title = "⚡ 实时监控中 (高胜率守护)"
                 action = "耐心等待 1m/10m 极值共振点"
                 color = "#00ff41"
 
-                # 高精度双周期共振与 BOLL 轨道过滤
                 if r1m <= 15 and r10m <= 25 and p <= bdn * 1.002:
                     title = "🔥【S级绝杀·买入看涨 (UP)】"
                     action = "立刻开仓：买入看涨 (UP)！"
@@ -150,7 +153,7 @@ def monitor():
                     lock = False
         except Exception as e:
             print(e)
-        time.sleep(1)
+        time.sleep(2)
 
 threading.Thread(target=monitor, daemon=True).start()
 
@@ -198,7 +201,7 @@ def api_data():
 
 @app.route('/test')
 def test_push():
-    notify("🧪 暴爷测试", "同源对齐通道连接成功")
+    notify("🧪 暴爷测试", "代理通道连接成功")
     return "SUCCESS"
 
 if __name__ == "__main__":
