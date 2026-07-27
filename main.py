@@ -1,4 +1,10 @@
-import os, time, threading, requests, urllib.parse
+import os
+import time
+import json
+import threading
+import requests
+import urllib.parse
+import websocket
 from flask import Flask, jsonify, Response
 
 app = Flask(__name__)
@@ -10,6 +16,11 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 session = requests.Session()
 session.headers.update({"User-Agent": "Mozilla/5.0"})
 
+# 全局内存缓存（避免重复请求历史数据）
+lock = threading.Lock()
+closes_1m = []
+last_kline_time = None
+
 EVO_ENGINE = {
     "records": [], "total_signals": 0, "wins": 0, "losses": 0,
     "win_rate": 100.0, "dynamic_rsi_low": 15, "dynamic_rsi_high": 85,
@@ -18,8 +29,8 @@ EVO_ENGINE = {
 
 DATA = {
     "price": 0.0, "rsi_1m": 50.0, "rsi_3m": 50.0, "rsi_5m": 50.0, "rsi_10m": 50.0, "rsi_1h": 50.0,
-    "title": "进化引擎启动中", "advice": "正在建立数据模型", "color": "#f0b90b", "time": "--",
-    "evo": EVO_ENGINE
+    "title": "极速 WebSocket 引擎连接中", "advice": "正在建立数据流", "color": "#f0b90b", "time": "--",
+    "evo": {"total": 0, "wins": 0, "losses": 0, "win_rate": 100.0, "stage": "初始算法", "low": 15, "high": 85}
 }
 
 def get_beijing_time():
@@ -60,32 +71,28 @@ def resample_closes(closes_1m, interval_min):
         if chunk: res.append(chunk[-1])
     return res
 
-def fetch_data():
-    # 目标：抓取币安 U本位合约 1m K线（事件合约真实锚定盘面）
+# 仅在程序第一次启动时加载历史数据
+def init_history():
+    global closes_1m
     target_fapi = "https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1m&limit=1000"
-    
-    # 绕过 Render 美国机房 IP 封锁的中继网关通道
     endpoints = [
+        target_fapi,
         f"https://corsproxy.io/?{urllib.parse.quote(target_fapi)}",
-        f"https://api.allorigins.win/raw?url={urllib.parse.quote(target_fapi)}",
-        "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=1000" # 防降级兜底
+        "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=1000"
     ]
-    
     res = None
     for u in endpoints:
         try:
-            r = session.get(u, timeout=3.0)
-            if r.status_code == 200 and isinstance(r.json(), list) and len(r.json()) > 0:
+            r = session.get(u, timeout=5.0)
+            if r.status_code == 200 and isinstance(r.json(), list):
                 res = r.json()
                 break
         except Exception:
             continue
-            
-    if not res:
-        raise Exception("合约行情中继通道超时")
-        
-    closes_1m = [float(k[4]) for k in res]
-    return closes_1m[-1], calc_rsi_wilder(closes_1m, 6), calc_rsi_wilder(resample_closes(closes_1m, 3), 6), calc_rsi_wilder(resample_closes(closes_1m, 5), 6), calc_rsi_wilder(resample_closes(closes_1m, 10), 6), calc_rsi_wilder(resample_closes(closes_1m, 60), 6)
+    if res:
+        with lock:
+            closes_1m = [float(k[4]) for k in res]
+            print(f"成功载入历史 K 线数据: {len(closes_1m)} 条")
 
 def process_evolution(current_price):
     global EVO_ENGINE
@@ -121,32 +128,73 @@ def analyze(p, r1, r3, r5, r10, r1h):
     if r1 <= r_low: return f"触发自适应超卖警戒 (<={r_low})", "谨防反弹，可小仓看涨 (UP)", "#3b82f6", "UP_WEAK"
     return "事件合约常态运转中", f"等待极值点 (门槛: <={r_low} 或 >={r_high})", "#848e9c", "NONE"
 
-def monitor():
-    global DATA, EVO_ENGINE
-    last_signal_time = 0
-    while True:
-        try:
-            p, r1, r3, r5, r10, r1h = fetch_data()
+# WebSocket 长连接实时监听（毫秒级推流，无需走代理）
+last_signal_time = 0
+def on_ws_message(ws, message):
+    global DATA, EVO_ENGINE, closes_1m, last_kline_time, last_signal_time
+    try:
+        data = json.loads(message)
+        k = data.get("k", {})
+        if not k: return
+        
+        p = float(k["c"])
+        k_time = k["t"]
+        
+        with lock:
+            if not closes_1m:
+                closes_1m.append(p)
+                last_kline_time = k_time
+            elif last_kline_time is None or k_time != last_kline_time:
+                last_kline_time = k_time
+                closes_1m.append(p)
+                if len(closes_1m) > 1000:
+                    closes_1m.pop(0)
+            else:
+                closes_1m[-1] = p
+
+            r1 = calc_rsi_wilder(closes_1m, 6)
+            r3 = calc_rsi_wilder(resample_closes(closes_1m, 3), 6)
+            r5 = calc_rsi_wilder(resample_closes(closes_1m, 5), 6)
+            r10 = calc_rsi_wilder(resample_closes(closes_1m, 10), 6)
+            r1h = calc_rsi_wilder(resample_closes(closes_1m, 60), 6)
+
             process_evolution(p)
             title, adv, color, sig_type = analyze(p, r1, r3, r5, r10, r1h)
             bj_time = get_beijing_time()
+
             DATA = {
                 "price": p, "rsi_1m": r1, "rsi_3m": r3, "rsi_5m": r5, "rsi_10m": r10, "rsi_1h": r1h,
                 "title": title, "advice": adv, "color": color, "time": bj_time,
                 "evo": {"total": EVO_ENGINE["total_signals"], "wins": EVO_ENGINE["wins"], "losses": EVO_ENGINE["losses"], "win_rate": EVO_ENGINE["win_rate"], "stage": EVO_ENGINE["evolution_stage"], "low": EVO_ENGINE["dynamic_rsi_low"], "high": EVO_ENGINE["dynamic_rsi_high"]}
             }
+
             now = time.time()
             if sig_type in ["UP", "DOWN"] and (now - last_signal_time) > 180:
                 EVO_ENGINE["records"].append({"timestamp": now, "trigger_price": p, "direction": sig_type, "status": "PENDING", "result": "UNKNOWN"})
                 notify(f"🔥{title}", f"现价: ${p}\n指令: {adv}\n进化门槛: Low={EVO_ENGINE['dynamic_rsi_low']} High={EVO_ENGINE['dynamic_rsi_high']}")
                 last_signal_time = now
-        except Exception as e: print("Monitor execution:", e)
-        time.sleep(1.5)
 
-threading.Thread(target=monitor, daemon=True).start()
+    except Exception as e:
+        print("WS 数据解析异常:", e)
+
+def start_websocket():
+    init_history()
+    ws_url = "wss://fstream.binance.com/ws/btcusdt@kline_1m"
+    while True:
+        try:
+            ws = websocket.WebSocketApp(
+                ws_url,
+                on_message=on_ws_message,
+                on_error=lambda ws, e: print("WS 错误:", e),
+                on_close=lambda ws, c, m: print("WS 断开重连...")
+            )
+            ws.run_forever(ping_interval=30, ping_timeout=10)
+        except Exception: pass
+        time.sleep(3)
+
+threading.Thread(target=start_websocket, daemon=True).start()
 
 HTML_PARTS = [
     '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BTC 事件合约终端</title>',
     '<style>body{font-family:sans-serif;padding:12px;background:#0b0e11;color:#eaecef;margin:0}.card{background:#181a20;padding:16px;border-radius:16px;max-width:420px;margin:auto;border:1px solid #2b2f36}h2{color:#f0b90b;font-size:17px;text-align:center;margin:0 0 10px 0}.evo-panel{background:#1e2329;padding:10px;border-radius:10px;margin-bottom:12px;border:1px solid #363c4e;font-size:12px}.evo-title{color:#f0b90b;font-weight:bold;margin-bottom:4px;display:flex;justify-content:space-between}.box{background:#2b2f36;padding:12px;border-radius:10px;margin:10px 0;border-left:5px solid #f0b90b}.title{font-size:12px;color:#848e9c;margin-bottom:2px}.val{font-size:14px;font-weight:bold}.item{display:flex;justify-content:space-between;margin:8px 0;font-size:13px;border-bottom:1px dashed #2b2f36;padding-bottom:4px}.v{font-weight:bold;color:#f0b90b}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.gbox{background:#2b2f36;padding:8px;border-radius:8px;text-align:center;font-size:11px}.gval{font-size:15px;font-weight:bold;margin-top:2px;color:#f0b90b}.time{color:#848e9c;font-size:10px;text-align:center;margin-top:10px}</style></head>',
-    '<body><div class="card"><h2>⚡ BTC 事件合约自适应进化终端</h2><div class="evo-panel"><div class="evo-title"><span id="estage">算法计算中...</span><span id="ewr" style="color:#10b981">胜率: 100%</span></div><div style="color:#848e9c">战绩统计: <span id="estat" style="color:#fff">0胜 0负 (总 0 单)</span> | 动态极值: <span id="ethres" style="color:#f0b90b">15 / 85</span></div></div><div class="box" id="box"><div class="title" id="stitle">加载中...</div><div class="val" id="sadv">连接行情中...</div></div><div class="item"><span>参考价</span><span class="v" id="pr">$0.00</span></div><div class="grid"><div class="gbox"><div>1m RSI(6)</div><div class="gval" id="r1">--</div></div><div class="gbox"><div>3m RSI(6)</div><div class="gval" id="r3">--</div></div><div class="gbox"><div>5m RSI(6)</div><div class="gval" id="r5">--</div></div><div class="gbox"><div>10m RSI(6)</div><div class="gval" id="r10">--</div></div></div><div class="item" style="margin-top:10px"><span>1h RSI(6) [大趋势]</span><span class="v" id="r1h">--</span></div><div class="time">更新时间 (北京时间): <br><span id="ut" style="color:#f0b90b;font-weight:bold">--</span></div></div>',
-    '<script>function up(){fetch("/api/data?_t="+Date.now()).then(r=>r.json()).then(d=>{document.getElementById("pr").innerText="$"+d.price.toFixed(2);document.getElementById("r1").innerText=d.rsi_1m;document.getElementById("r3").innerText=d.rsi_3m;document.getElementById("r5").innerText=d.rsi_5m;document.getElementById("r10").innerText=d.rsi_10m;document.getElementById("r1h").innerText=d.rsi_1h;document.getElementById("stitle").innerText=d.title;document.getElementById("sadv"
+    '<body><div class="card"><h2>⚡ BTC 事件合约自适应进化终端</h2><div class="evo-panel"><div class="evo-title"><span id="estage">算法计算中...</span><span id="ewr" style="color:#10b981">胜率: 100%</span></div><div style="color:#848e9c">战绩统计: <span id="estat" style="color:#fff">0胜 0负 (总 0 单)</span> | 动态极值: <span id="ethres" style="color:#f0b90b">15 / 85</span></div></d
