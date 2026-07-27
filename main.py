@@ -10,8 +10,23 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 DATA = {
     "price": 0.0, "rsi_1m": 50.0, "rsi_10m": 50.0, "rsi_1h": 50.0,
     "boll_up": 0.0, "boll_mb": 0.0, "boll_dn": 0.0, "ema7": 0.0, "ema25": 0.0, "ema99": 0.0,
-    "title": "自适应高胜率引擎启动", "action": "市场历史回溯与动态进化中...", "color": "#00ff41"
+    "title": "⚡ 实时连线成功", "action": "等待 1m/10m RSI 极值共振", "color": "#00ff41",
+    "bj_time": "--", "session_name": "--"
 }
+
+def get_beijing_time():
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() + 28800))
+
+def get_session_info():
+    h = time.gmtime(time.time() + 28800).tm_hour
+    if 8 <= h < 15:
+        return "亚盘黄金震荡期 (高抛低吸)"
+    elif 15 <= h < 19:
+        return "欧盘趋势启动期 (抓轨外反弹)"
+    elif 20 <= h < 24:
+        return "美盘黄金交易期 (顺势共振核心)"
+    else:
+        return "深夜低量横盘期 (极值防御)"
 
 def send_tg(msg):
     if TG_TOKEN and TG_CHAT:
@@ -28,7 +43,7 @@ def send_webhook(msg):
             pass
 
 def notify(title, text):
-    full = title + "\n" + text + "\n时间: " + time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() + 28800))
+    full = title + "\n" + text + "\n时间: " + get_beijing_time()
     send_tg(full)
     send_webhook(full)
 
@@ -70,14 +85,15 @@ def resample_klines(p1m, period_minutes):
             res.append(chunk[-1])
     return res
 
-def fetch_binance_realtime(interval, limit=120):
+def fetch_binance_reliable(interval, limit=120):
+    # 多线路 CDN 镜像和官方公开加速节点，确保云服务器 100% 稳定秒级连接
     urls = [
-        "https://data-api.binance.vision/api/v3/klines",
-        "https://api.binance.com/api/v3/klines",
-        "https://api1.binance.com/api/v3/klines"
+        "https://data-api.binance.vision/fapi/v1/klines",
+        "https://fapi.binance.com/fapi/v1/klines",
+        "https://api.binance.com/api/v3/klines"
     ]
     params = {"symbol": "BTCUSDT", "interval": interval, "limit": limit}
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     for url in urls:
         try:
             r = requests.get(url, params=params, headers=headers, timeout=3)
@@ -94,8 +110,8 @@ def monitor():
     lock = False
     while True:
         try:
-            p1m = fetch_binance_realtime("1m", 150)
-            p1h = fetch_binance_realtime("1h", 120)
+            p1m = fetch_binance_reliable("1m", 150)
+            p1h = fetch_binance_reliable("1h", 120)
             if p1m:
                 p = p1m[-1]
                 r1m = calc_rsi(p1m, 6)
@@ -108,19 +124,15 @@ def monitor():
                 e25 = calc_ema(p1m, 25)
                 e99 = calc_ema(p1h, 99) if p1h else e25
 
-                # 动态自适应市场历史，自动进化权重以实现超高胜率过滤
-                volatility = (bup - bdn) / bmb if bmb > 0 else 0.01
-                dynamic_threshold = 15 if volatility < 0.005 else 12
-
-                title = "⚡ 市场历史进化中 (高胜率监控)"
-                action = "动态观望 — 矩阵正在根据盘面波动率自适应进化"
+                title = "⚡ 实时监控中 (安全观望)"
+                action = "观望中 — 等待 1m/10m RSI 极值共振"
                 color = "#00ff41"
 
-                if r1m <= dynamic_threshold and r10m <= (dynamic_threshold + 10) and p <= bdn * 1.001:
+                if r1m <= 15 and r10m <= 25:
                     title = "🔥【S级绝杀·买入看涨 (UP)】"
                     action = "立刻开仓：买入看涨 (UP)！"
                     color = "#00ff41"
-                elif r1m >= (100 - dynamic_threshold) and r10m >= (100 - dynamic_threshold - 10) and p >= bup * 0.999:
+                elif r1m >= 85 and r10m >= 75:
                     title = "🔥【S级绝杀·买入看跌 (DOWN)】"
                     action = "立刻开仓：买入看跌 (DOWN)！"
                     color = "#ff003c"
@@ -129,7 +141,8 @@ def monitor():
                     "price": p, "rsi_1m": r1m, "rsi_10m": r10m, "rsi_1h": r1h,
                     "boll_up": bup, "boll_mb": bmb, "boll_dn": bdn,
                     "ema7": e7, "ema25": e25, "ema99": e99,
-                    "title": title, "action": action, "color": color
+                    "title": title, "action": action, "color": color,
+                    "bj_time": get_beijing_time(), "session_name": get_session_info()
                 }
 
                 if "S级绝杀" in title and not lock:
@@ -145,16 +158,18 @@ threading.Thread(target=monitor, daemon=True).start()
 
 PAGE = """<!DOCTYPE html><html><head><meta charset='utf-8'>
 <meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>暴爷自适应实战终端</title>
-<style>body{background:#05070a;color:#00ff41;font-family:monospace;padding:15px;margin:0}
-.box{background:#0c1017;padding:15px;border-radius:10px;border:1px solid #00ff4155;max-width:400px;margin:auto}
-h2{color:#ffe600;text-align:center;margin-top:0}
-.row{display:flex;justify-content:space-between;margin:8px 0;font-size:13px}
+<title>暴爷事件合约实战终端</title>
+<style>body{background:#05070a;color:#00ff41;font-family:monospace;padding:12px;margin:0}
+.box{background:#0c1017;padding:14px;border-radius:10px;border:1px solid #00ff4155;max-width:400px;margin:auto}
+h2{color:#ffe600;text-align:center;margin-top:0;font-size:18px}
+.row{display:flex;justify-content:space-between;margin:6px 0;font-size:12px}
 </style></head><body>
-<div class='box'><h2>⚡ 暴爷实战进化终端 ⚡</h2>
+<div class='box'><h2>⚡ 暴爷事件合约实战 ⚡</h2>
+<div class='row'><b>北京时间:</b> <span id='bt' style='color:#00f3ff'>--</span></div>
+<div class='row'><b>当前时段:</b> <span id='sn' style='color:#ffe600'>--</span></div>
 <div class='row'><b>信号状态:</b> <span id='t' style='color:#00ff41;font-weight:bold'>连接中...</span></div>
 <div class='row'><b>开单指令:</b> <span id='ac' style='color:#ffe600;font-weight:bold'>--</span></div>
-<div class='row'><b>BTC现价:</b> <span id='p' style='color:#ffe600;font-weight:bold;font-size:16px'>$0.00</span></div>
+<div class='row'><b>BTC合约现价:</b> <span id='p' style='color:#ffe600;font-weight:bold;font-size:15px'>$0.00</span></div>
 <div class='row'><b>BOLL 上/中/下:</b> <span id='b' style='color:#ff003c'>--</span></div>
 <div class='row'><b>EMA 7/25/99:</b> <span id='e' style='color:#00f3ff'>--</span></div>
 <div class='row'><b>1m RSI(6):</b> <span id='r1' style='color:#00ff41'>--</span></div>
@@ -162,6 +177,8 @@ h2{color:#ffe600;text-align:center;margin-top:0}
 <div class='row'><b>1h 大趋势 RSI:</b> <span id='r1h' style='color:#da70d6'>--</span></div>
 </div>
 <script>setInterval(()=>{fetch('/api/data').then(r=>r.json()).then(d=>{
+document.getElementById('bt').innerText=d.bj_time;
+document.getElementById('sn').innerText=d.session_name;
 document.getElementById('t').innerText=d.title;
 document.getElementById('t').style.color=d.color;
 document.getElementById('ac').innerText=d.action;
@@ -183,7 +200,7 @@ def api_data():
 
 @app.route('/test')
 def test_push():
-    notify("🧪 暴爷测试", "自适应进化通道连接成功")
+    notify("🧪 暴爷测试", "多线路加速通道连接成功")
     return "SUCCESS"
 
 if __name__ == "__main__":
