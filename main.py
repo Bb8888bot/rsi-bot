@@ -13,10 +13,6 @@ TELEGRAM_CHAT_ID = os.environ.get("CHAT_ID")
 QQ_USER = os.environ.get("QQ_USER")  # 发件/收件 QQ 邮箱
 QQ_PASS = os.environ.get("QQ_PASS")  # 16 位 QQ 邮箱授权码
 
-@app.route('/')
-def home():
-    return "RSI Bot 运行中 (5秒高频监控 | TG + QQ邮箱双推送)"
-
 # TG 推送函数
 def send_tg(msg):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -37,7 +33,6 @@ def send_email(subject, content):
         message['To'] = Header(QQ_USER, 'utf-8')
         message['Subject'] = Header(subject, 'utf-8')
 
-        # 连接 QQ 邮箱 SSL 加密端口 465
         server = smtplib.SMTP_SSL("smtp.qq.com", 465, timeout=10)
         server.login(QQ_USER, QQ_PASS)
         server.sendmail(QQ_USER, [QQ_USER], message.as_string())
@@ -48,9 +43,7 @@ def send_email(subject, content):
 
 # 双通道统一通知
 def notify(title, detail_text):
-    # 1. 发送 Telegram (需要 VPN)
     send_tg(f"{title}\n{detail_text}")
-    # 2. 发送 QQ 邮箱 (国内直连最稳)
     clean_text = detail_text.replace('*', '').replace('`', '')
     send_email(title, f"{title}\n\n{clean_text}\n\n发送时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
@@ -95,6 +88,44 @@ def get_rsi_data():
     
     latest_price = prices_1m[-1]
     return latest_price, rsi_1m, rsi_10m
+
+# 首页：直接展示当前 BTC 实时价格与 RSI 仪表盘
+@app.route('/')
+def home():
+    try:
+        price, rsi_1m, rsi_10m = get_rsi_data()
+        now_str = time.strftime('%Y-%m-%d %H:%M:%S')
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>RSI Bot 运行状态</title>
+            <style>
+                body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background: #f5f5f7; color: #333; }}
+                .card {{ background: #fff; padding: 24px; border-radius: 16px; max-width: 380px; margin: 40px auto; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }}
+                h2 {{ margin-top: 0; color: #10b981; font-size: 18px; text-align: center; }}
+                .item {{ display: flex; justify-content: space-between; margin: 16px 0; font-size: 15px; border-bottom: 1px dashed #eee; padding-bottom: 10px; }}
+                .val {{ font-weight: bold; color: #2563eb; }}
+                .time {{ color: #888; font-size: 12px; text-align: center; margin-top: 20px; }}
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h2>🟢 RSI Bot 监控运行中</h2>
+                <div class="item"><span>交易对</span><span class="val">BTC / USDT (币安)</span></div>
+                <div class="item"><span>当前价格</span><span class="val">${price:,.2f}</span></div>
+                <div class="item"><span>1m RSI</span><span class="val">{rsi_1m}</span></div>
+                <div class="item"><span>10m RSI</span><span class="val">{rsi_10m}</span></div>
+                <div class="time">更新时间: {now_str}<br>(刷新网页可看最新数据)</div>
+            </div>
+        </body>
+        </html>
+        """
+        return html
+    except Exception as e:
+        return f"RSI Bot 运行中，获取行情数据中: {e}"
 
 def monitor():
     s_1m, s_10m = "NORMAL", "NORMAL"
