@@ -12,8 +12,12 @@ QQ_PASS = os.environ.get("QQ_PASS")
 
 DATA = {
     "price": 0.0, "rsi_1m": 50.0, "rsi_3m": 50.0, "rsi_5m": 50.0, "rsi_10m": 50.0, "rsi_1h": 50.0,
-    "title": "初始化中", "advice": "正在连接数据源", "color": "#f0b90b", "time": "--"
+    "title": "初始化中", "advice": "正在同步事件合约数据源", "color": "#f0b90b", "time": "--"
 }
+
+# 强制校准北京时间 (UTC+8)
+def get_beijing_time():
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() + 28800))
 
 def send_tg(msg):
     if TG_TOKEN and TG_CHAT:
@@ -39,9 +43,10 @@ def send_email(subject, content):
 def notify(title, text):
     send_tg(f"{title}\n{text}")
     clean = text.replace("*", "").replace("`", "")
-    send_email(title, f"{title}\n\n{clean}\n\n时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    send_email(title, f"{title}\n\n{clean}\n\n北京时间: {get_beijing_time()}")
 
-def calc_rsi(prices, period=6):
+# 币安官方 Wilder 平滑 RMA 算法
+def calc_rsi_wilder(prices, period=6):
     if len(prices) < period + 1:
         return 50.0
     gains, losses = [], []
@@ -49,14 +54,17 @@ def calc_rsi(prices, period=6):
         d = prices[i] - prices[i-1]
         gains.append(d if d > 0 else 0.0)
         losses.append(abs(d) if d < 0 else 0.0)
+    
     avg_g = sum(gains[:period]) / period
     avg_l = sum(losses[:period]) / period
     for i in range(period, len(gains)):
         avg_g = (avg_g * (period - 1) + gains[i]) / period
         avg_l = (avg_l * (period - 1) + losses[i]) / period
+        
     if avg_l == 0:
         return 100.0
-    return round(100.0 - (100.0 / (1.0 + (avg_g / avg_l))), 2)
+    rs = avg_g / avg_l
+    return round(100.0 - (100.0 / (1.0 + rs)), 2)
 
 def agg_klines(res, ms):
     g = {}
@@ -65,33 +73,34 @@ def agg_klines(res, ms):
     return list(g.values())
 
 def fetch_data():
-    # 多节点自动轮询，避开 Render 服务器 IP 拦截
     urls = [
         "https://data-api.binance.vision/api/v3/klines",
-        "https://api1.binance.com/api/v3/klines",
-        "https://api2.binance.com/api/v3/klines",
-        "https://api.binance.com/api/v3/klines"
+        "https://api.binance.com/api/v3/klines",
+        "https://api1.binance.com/api/v3/klines"
     ]
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    headers = {"User-Agent": "Mozilla/5.0"}
     res = None
     for u in urls:
         try:
-            r = requests.get(u, params={"symbol": "BTCUSDT", "interval": "1m", "limit": 400}, headers=headers, timeout=3)
+            # 抓取 1000 根数据深度，确保 Wilder 算法完全收敛
+            r = requests.get(u, params={"symbol": "BTCUSDT", "interval": "1m", "limit": 1000}, headers=headers, timeout=3)
             if r.status_code == 200:
                 res = r.json()
                 break
         except:
             continue
     if not res:
-        raise Exception("行情接口连接超时")
+        raise Exception("连接行情超时")
 
     p1m = [float(k[4]) for k in res]
     price = p1m[-1]
-    r1m = calc_rsi(p1m, 6)
-    r3m = calc_rsi(agg_klines(res, 180000), 6)
-    r5m = calc_rsi(agg_klines(res, 300000), 6)
-    r10m = calc_rsi(agg_klines(res, 600000), 6)
-    r1h = calc_rsi(agg_klines(res, 3600000), 6)
+    
+    r1m = calc_rsi_wilder(p1m, 6)
+    r3m = calc_rsi_wilder(agg_klines(res, 180000), 6)
+    r5m = calc_rsi_wilder(agg_klines(res, 300000), 6)
+    r10m = calc_rsi_wilder(agg_klines(res, 600000), 6)
+    r1h = calc_rsi_wilder(agg_klines(res, 3600000), 6)
+    
     return price, r1m, r3m, r5m, r10m, r1h
 
 def analyze(price, r1m, r3m, r5m, r10m, r1h):
@@ -145,7 +154,7 @@ h2{color:#f0b90b;font-size:18px;text-align:center;margin-top:0}
 <div class="gbox"><div>10m RSI(6)</div><div class="gval" id="r10">--</div></div>
 </div>
 <div class="item" style="margin-top:15px"><span>1h RSI(6) [大趋势]</span><span class="v" id="r1h">--</span></div>
-<div class="time">更新时间: <span id="ut">--</span></div>
+<div class="time">更新时间 (北京时间): <br><span id="ut" style="color:#f0b90b;font-weight:bold">--</span></div>
 </div>
 <script>
 function up(){
@@ -183,11 +192,11 @@ def monitor():
         try:
             p, r1, r3, r5, r10, r1h = fetch_data()
             title, adv, color = analyze(p, r1, r3, r5, r10, r1h)
-            now = time.strftime('%Y-%m-%d %H:%M:%S')
+            bj_time = get_beijing_time()
             DATA = {
                 "price": p, "rsi_1m": r1, "rsi_3m": r3, "rsi_5m": r5,
                 "rsi_10m": r10, "rsi_1h": r1h, "title": title,
-                "advice": adv, "color": color, "time": now
+                "advice": adv, "color": color, "time": bj_time
             }
             if r1 >= 85 and not s1_h:
                 notify("🚨【事件合约预警】BTC 1m RSI 极度超买！", f"参考价: ${p}\n1m RSI(6): {r1} (>=85)")
