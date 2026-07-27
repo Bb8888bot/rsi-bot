@@ -9,13 +9,11 @@ from flask import Flask, jsonify, Response
 
 app = Flask(__name__)
 
-# 环境变量
 TELEGRAM_BOT_TOKEN = os.environ.get("BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("CHAT_ID")
 QQ_USER = os.environ.get("QQ_USER")
 QQ_PASS = os.environ.get("QQ_PASS")
 
-# 实时数据全局缓存
 LATEST_DATA = {
     "price": 0.0,
     "rsi_1m": 0.0,
@@ -24,17 +22,15 @@ LATEST_DATA = {
     "rsi_10m": 0.0,
     "rsi_1h": 0.0,
     "signal_title": "初始化中",
-    "advice": "正在连接事件合约数据源",
+    "advice": "正在连接事件合约行情源",
     "color": "#f0b90b",
     "update_time": "--"
 }
 
-# ----------------- 通知模块 -----------------
-
 def send_tg(msg):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = "https://api.telegram.org/bot" + str(TELEGRAM_BOT_TOKEN) + "/sendMessage"
     try:
         requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=5)
     except Exception as e:
@@ -45,8 +41,8 @@ def send_email(subject, content):
         return
     try:
         message = MIMEText(content, "plain", "utf-8")
-        message["From"] = Header(f"事件合约助手 <{QQ_USER}>", "utf-8")
-        message["To"] = Header(QQ_USER, "utf-8")
+        message["From"] = Header("事件合约助手 <" + str(QQ_USER) + ">", "utf-8")
+        message["To"] = Header(str(QQ_USER), "utf-8")
         message["Subject"] = Header(subject, "utf-8")
 
         server = smtplib.SMTP_SSL("smtp.qq.com", 465, timeout=5)
@@ -58,11 +54,10 @@ def send_email(subject, content):
         print("邮件推送异常:", e)
 
 def notify(title, detail_text):
-    send_tg(f"{title}\n{detail_text}")
+    send_tg(title + "\n" + detail_text)
     clean_text = detail_text.replace("*", "").replace("`", "")
-    send_email(title, f"{title}\n\n{clean_text}\n\n发送时间: " + time.strftime("%Y-%m-%d %H:%M:%S"))
-
-# ----------------- 计算模块 -----------------
+    now_time = time.strftime("%Y-%m-%d %H:%M:%S")
+    send_email(title, title + "\n\n" + clean_text + "\n\n发送时间: " + now_time)
 
 def calc_rsi(prices, period=6):
     if len(prices) < period + 1:
@@ -129,8 +124,6 @@ def analyze_all_indicators(price, rsi_1m, rsi_3m, rsi_5m, rsi_10m, rsi_1h):
         return "事件合约触发极度超卖警戒 (≤ 15)", "谨防快速回升，可小仓买入看涨 (UP)", "#3b82f6"
     else:
         return "事件合约常态运转中", "建议观望，等待 >85 或 <15 极值信号", "#848e9c"
-
-# ----------------- Web 前端界面 -----------------
 
 HTML_CONTENT = """<!DOCTYPE html>
 <html>
@@ -200,8 +193,6 @@ def home():
 def api_data():
     return jsonify(LATEST_DATA)
 
-# ----------------- 1秒后台监控线程 -----------------
-
 def monitor():
     global LATEST_DATA
     s_1m_high, s_1m_low = False, False
@@ -227,20 +218,22 @@ def monitor():
                 "update_time": now_str
             }
 
-            # 1m RSI 预警
             if rsi_1m and rsi_1m >= 85 and not s_1m_high:
-                notify("🚨【事件合约预警】BTC 1m RSI 极度超买！", f"参考价格: ${price}\n1m RSI(6): {rsi_1m} (>= 85)")
+                msg = "参考价格: $" + str(price) + "\n1m RSI(6): " + str(rsi_1m) + " (>= 85)"
+                notify("🚨【事件合约预警】BTC 1m RSI 极度超买！", msg)
                 s_1m_high = True
             elif rsi_1m and rsi_1m <= 15 and not s_1m_low:
-                notify("🟢【事件合约预警】BTC 1m RSI 极度超卖！", f"参考价格: ${price}\n1m RSI(6): {rsi_1m} (<= 15)")
+                msg = "参考价格: $" + str(price) + "\n1m RSI(6): " + str(rsi_1m) + " (<= 15)"
+                notify("🟢【事件合约预警】BTC 1m RSI 极度超卖！", msg)
                 s_1m_low = True
             elif rsi_1m and 25 < rsi_1m < 75:
                 s_1m_high, s_1m_low = False, False
 
-            # 10m RSI 预警
             if rsi_10m and rsi_10m >= 85 and not s_10m_high:
-                notify("🚨【事件合约重磅】BTC 10m RSI 极度超买！", f"参考价格: ${price}\n10m RSI(6): {rsi_10m} (>= 85)")
+                msg = "参考价格: $" + str(price) + "\n10m RSI(6): " + str(rsi_10m) + " (>= 85)"
+                notify("🚨【事件合约重磅】BTC 10m RSI 极度超买！", msg)
                 s_10m_high = True
             elif rsi_10m and rsi_10m <= 15 and not s_10m_low:
-                notify("🟢【事件合约重磅】BTC 10m RSI 极度超卖！", f"参考价格: ${price}\n10m RSI(6): {rsi_10m} (<= 15)")
-       
+                msg = "参考价格: $" + str(price) + "\n10m RSI(6): " + str(rsi_10m) + " (<= 15)"
+                notify("🟢【事件合约重磅】BTC 10m RSI 极度超卖！", msg)
+              
