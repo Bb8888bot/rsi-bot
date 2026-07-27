@@ -1,204 +1,214 @@
-import os, time, threading, requests, urllib.parse
-from flask import Flask, jsonify, Response
+import os
+import time
+import json
+import requests
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from datetime import datetime, timezone, timedelta
+import websocket
 
-app = Flask(__name__)
+# --- 环境变量配置 ---
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+SYMBOL = "btcusdt"
+RSI_PERIOD = 6  # 匹配事件合约交易界面常用的 RSI(6) 指标
 
-TG_TOKEN = os.environ.get("BOT_TOKEN")
-TG_CHAT = os.environ.get("CHAT_ID")
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
+# 历史收盘价数据池（用于计算 RSI）
+klines_1m = []   # 1m K线收盘价
+klines_10m = []  # 10m K线收盘价（由 1m 自动聚合）
+klines_1h = []   # 1h K线收盘价
 
-DATA = {
-    "price": 0.0, "rsi_1m": 50.0, "rsi_10m": 50.0, "rsi_1h": 50.0,
-    "boll_up": 0.0, "boll_mb": 0.0, "boll_dn": 0.0, "ema7": 0.0, "ema25": 0.0, "ema99": 0.0,
-    "title": "⚡ 中继代理连接中", "action": "实时监控中 — 等待极值共振", "color": "#00ff41",
-    "bj_time": "--", "session_name": "--"
+temp_1m_buffer = []  # 10m 聚合缓存
+
+# 报警冷却字典（防止同周期极端行情秒级重复轰炸）
+last_alert_times = {
+    "1m": 0,
+    "10m": 0,
+    "1h": 0
 }
+ALERT_COOLDOWN = 60  # 同周期 60 秒内只触发一次推送
 
 def get_beijing_time():
-    return time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() + 28800))
+    bj_tz = timezone(timedelta(hours=8))
+    return datetime.now(bj_tz).strftime("%Y-%m-%d %H:%M:%S")
 
-def get_session_info():
-    h = time.gmtime(time.time() + 28800).tm_hour
-    if 8 <= h < 15:
-        return "亚盘黄金震荡期 (高抛低吸)"
-    elif 15 <= h < 19:
-        return "欧盘趋势启动期 (抓轨外反弹)"
-    elif 20 <= h < 24:
-        return "美盘黄金交易期 (顺势共振核心)"
-    else:
-        return "深夜低量横盘期 (极值防御)"
+def send_telegram(msg):
+    bj_time = get_beijing_time()
+    print(f"[{bj_time}] 📢 触发预警:\n{msg}")
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": msg,
+        "parse_mode": "Markdown"
+    }
+    try:
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print(f"Telegram 推送失败: {e}")
 
-def send_tg(msg):
-    if TG_TOKEN and TG_CHAT:
-        try:
-            requests.post("https://api.telegram.org/bot" + TG_TOKEN + "/sendMessage", data={"chat_id": TG_CHAT, "text": msg}, timeout=3)
-        except:
-            pass
-
-def send_webhook(msg):
-    if WEBHOOK_URL:
-        try:
-            requests.post(WEBHOOK_URL.strip(), json={"msgtype": "text", "text": {"content": msg}}, timeout=3)
-        except:
-            pass
-
-def notify(title, text):
-    full = title + "\n" + text + "\n时间: " + get_beijing_time()
-    send_tg(full)
-    send_webhook(full)
-
-def calc_rsi(prices, period=6):
+def calculate_rsi(prices, period=RSI_PERIOD):
     if len(prices) < period + 1:
         return 50.0
-    gains, losses = 0.0, 0.0
-    for i in range(1, len(prices)):
-        d = prices[i] - prices[i-1]
-        if d > 0: gains += d
-        else: losses += abs(d)
-    avg_g = gains / period
-    avg_l = losses / period
-    if avg_l == 0: return 100.0
-    return round(100.0 - (100.0 / (1.0 + (avg_g / avg_l))), 2)
+    deltas = [prices[i] - prices[i-1] for i in range(len(prices)-period, len(prices))]
+    gains = [d for d in deltas if d > 0]
+    losses = [-d for d in deltas if d < 0]
+    avg_gain = sum(gains) / period if gains else 0
+    avg_loss = sum(losses) / period if losses else 0
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
 
-def calc_boll(prices, period=20):
-    if len(prices) < period:
-        p = prices[-1] if prices else 0.0
-        return p, p, p
-    sp = prices[-period:]
-    sma = sum(sp) / period
-    std = (sum((x - sma) ** 2 for x in sp) / period) ** 0.5
-    return round(sma + (std * 2), 2), round(sma, 2), round(sma - (std * 2), 2)
-
-def calc_ema(prices, period):
-    if len(prices) < period:
-        return prices[-1] if prices else 0.0
-    k = 2 / (period + 1)
-    ema = sum(prices[:period]) / period
-    for p in prices[period:]:
-        ema = (p * k) + (ema * (1 - k))
-    return round(ema, 2)
-
-def fetch_binance_via_proxy(interval, limit=100):
-    target_url = f"https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval={interval}&limit={limit}"
-    encoded_target = urllib.parse.quote(target_url, safe='')
-    
-    # 采用全球免封锁多重中继代理通道
-    proxy_urls = [
-        f"https://api.allorigins.win/raw?url={encoded_target}",
-        f"https://corsproxy.io/?{urllib.parse.quote(target_url)}",
-        f"https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval={interval}&limit={limit}"
+def fetch_initial_klines():
+    """启动时从多个备用 API 节点预加载历史数据，确保上线即可精准计算 RSI"""
+    global klines_1m, klines_10m, klines_1h
+    api_hosts = [
+        "https://api.binance.com",
+        "https://api1.binance.com",
+        "https://api3.binance.com",
+        "https://data-api.binance.vision"
     ]
     
-    headers = {"User-Agent": "Mozilla/5.0"}
-    for p_url in proxy_urls:
+    for host in api_hosts:
         try:
-            r = requests.get(p_url, headers=headers, timeout=4)
-            if r.status_code == 200:
-                res = r.json()
-                if isinstance(res, list) and len(res) > 0:
-                    return [float(k[4]) for k in res]
-        except:
-            continue
-    return []
-
-def monitor():
-    global DATA
-    lock = False
-    while True:
-        try:
-            p1m = fetch_binance_via_proxy("1m", 100)
-            p10m = fetch_binance_via_proxy("10m", 100)
-            p1h = fetch_binance_via_proxy("1h", 100)
-
-            if p1m:
-                p = p1m[-1]
-                r1m = calc_rsi(p1m, 6)
-                r10m = calc_rsi(p10m, 6) if p10m else r1m
-                r1h = calc_rsi(p1h, 6) if p1h else r1m
-
-                bup, bmb, bdn = calc_boll(p1m, 20)
-                e7 = calc_ema(p1m, 7)
-                e25 = calc_ema(p1m, 25)
-                e99 = calc_ema(p1h, 99) if p1h else e25
-
-                title = "⚡ 实时监控中 (高胜率守护)"
-                action = "耐心等待 1m/10m 极值共振点"
-                color = "#00ff41"
-
-                if r1m <= 15 and r10m <= 25 and p <= bdn * 1.002:
-                    title = "🔥【S级绝杀·买入看涨 (UP)】"
-                    action = "立刻开仓：买入看涨 (UP)！"
-                    color = "#00ff41"
-                elif r1m >= 85 and r10m >= 75 and p >= bup * 0.998:
-                    title = "🔥【S级绝杀·买入看跌 (DOWN)】"
-                    action = "立刻开仓：买入看跌 (DOWN)！"
-                    color = "#ff003c"
-
-                DATA = {
-                    "price": p, "rsi_1m": r1m, "rsi_10m": r10m, "rsi_1h": r1h,
-                    "boll_up": bup, "boll_mb": bmb, "boll_dn": bdn,
-                    "ema7": e7, "ema25": e25, "ema99": e99,
-                    "title": title, "action": action, "color": color,
-                    "bj_time": get_beijing_time(), "session_name": get_session_info()
-                }
-
-                if "S级绝杀" in title and not lock:
-                    notify(title, "现价: $" + str(p) + "\n操作指令: " + action + "\n1m RSI: " + str(r1m) + " | 10m RSI: " + str(r10m))
-                    lock = True
-                elif "S级绝杀" not in title:
-                    lock = False
+            # 1. 获取 1m 历史 K线
+            resp_1m = requests.get(f"{host}/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=120", timeout=5)
+            if resp_1m.status_code == 200:
+                data_1m = resp_1m.json()
+                klines_1m = [float(x[4]) for x in data_1m[:-1]]
+                
+                # 聚合 10m 历史
+                klines_10m = klines_1m[9::10]
+                
+                # 2. 获取 1h 历史 K线
+                resp_1h = requests.get(f"{host}/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=60", timeout=5)
+                if resp_1h.status_code == 200:
+                    data_1h = resp_1h.json()
+                    klines_1h = [float(x[4]) for x in data_1h[:-1]]
+                    
+                print(f"[{get_beijing_time()}] ✅ 成功从节点 {host} 预加载历史 K 线！")
+                return
         except Exception as e:
-            print(e)
-        time.sleep(2)
+            print(f"从节点 {host} 拉取失败，尝试下一个...")
+            continue
 
-threading.Thread(target=monitor, daemon=True).start()
+def check_and_notify(timeframe, current_price, rsi_value):
+    now_ts = time.time()
+    if now_ts - last_alert_times[timeframe] < ALERT_COOLDOWN:
+        return
 
-PAGE = """<!DOCTYPE html><html><head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>暴爷事件合约实战终端</title>
-<style>body{background:#05070a;color:#00ff41;font-family:monospace;padding:12px;margin:0}
-.box{background:#0c1017;padding:14px;border-radius:10px;border:1px solid #00ff4155;max-width:400px;margin:auto}
-h2{color:#ffe600;text-align:center;margin-top:0;font-size:18px}
-.row{display:flex;justify-content:space-between;margin:6px 0;font-size:12px}
-</style></head><body>
-<div class='box'><h2>⚡ 暴爷事件合约实战 ⚡</h2>
-<div class='row'><b>北京时间:</b> <span id='bt' style='color:#00f3ff'>--</span></div>
-<div class='row'><b>当前时段:</b> <span id='sn' style='color:#ffe600'>--</span></div>
-<div class='row'><b>信号状态:</b> <span id='t' style='color:#00ff41;font-weight:bold'>连接中...</span></div>
-<div class='row'><b>开单指令:</b> <span id='ac' style='color:#ffe600;font-weight:bold'>--</span></div>
-<div class='row'><b>BTC现价:</b> <span id='p' style='color:#ffe600;font-weight:bold;font-size:15px'>$0.00</span></div>
-<div class='row'><b>BOLL 上/中/下:</b> <span id='b' style='color:#ff003c'>--</span></div>
-<div class='row'><b>EMA 7/25/99:</b> <span id='e' style='color:#00f3ff'>--</span></div>
-<div class='row'><b>1m RSI(6):</b> <span id='r1' style='color:#00ff41'>--</span></div>
-<div class='row'><b>10m RSI(6):</b> <span id='r10' style='color:#ffe600'>--</span></div>
-<div class='row'><b>1h 大趋势 RSI:</b> <span id='r1h' style='color:#da70d6'>--</span></div>
-</div>
-<script>setInterval(()=>{fetch('/api/data').then(r=>r.json()).then(d=>{
-document.getElementById('bt').innerText=d.bj_time;
-document.getElementById('sn').innerText=d.session_name;
-document.getElementById('t').innerText=d.title;
-document.getElementById('t').style.color=d.color;
-document.getElementById('ac').innerText=d.action;
-document.getElementById('p').innerText='$'+d.price.toFixed(2);
-document.getElementById('b').innerText=d.boll_up+' / '+d.boll_mb+' / '+d.boll_dn;
-document.getElementById('e').innerText=d.ema7+' / '+d.ema25+' / '+d.ema99;
-document.getElementById('r1').innerText=d.rsi_1m;
-document.getElementById('r10').innerText=d.rsi_10m;
-document.getElementById('r1h').innerText=d.rsi_1h;
-});},1000);</script></body></html>"""
+    bj_time = get_beijing_time()
 
-@app.route('/')
-def home():
-    return Response(PAGE, mimetype="text/html")
+    if rsi_value >= 85:
+        last_alert_times[timeframe] = now_ts
+        msg = (
+            f"🚨 **BTCUSDT 事件合约【{timeframe} 周期】超买预警**\n"
+            f"⏰ **北京时间**: `{bj_time}`\n"
+            f"💰 **当前价格**: `{current_price:.2f}`\n"
+            f"📊 **{timeframe} RSI({RSI_PERIOD})**: `{rsi_value:.2f}` (≥ 85 极度超买)\n"
+            f"💡 **建议操作**: 建议选择买入 **【下跌】** 事件合约"
+        )
+        send_telegram(msg)
 
-@app.route('/api/data')
-def api_data():
-    return jsonify(DATA)
+    elif rsi_value <= 15:
+        last_alert_times[timeframe] = now_ts
+        msg = (
+            f"🚨 **BTCUSDT 事件合约【{timeframe} 周期】超卖预警**\n"
+            f"⏰ **北京时间**: `{bj_time}`\n"
+            f"💰 **当前价格**: `{current_price:.2f}`\n"
+            f"📊 **{timeframe} RSI({RSI_PERIOD})**: `{rsi_value:.2f}` (≤ 15 极度超卖)\n"
+            f"💡 **建议操作**: 建议选择买入 **【上涨】** 事件合约"
+        )
+        send_telegram(msg)
 
-@app.route('/test')
-def test_push():
-    notify("🧪 暴爷测试", "代理通道连接成功")
-    return "SUCCESS"
+def on_message(ws, message):
+    data = json.loads(message)
+    if 'data' not in data or 'k' not in data['data']:
+        return
+
+    kline = data['data']['k']
+    close_price = float(kline['c'])
+    is_closed = kline['x']
+    interval = kline['i']
+
+    if interval == '1m':
+        # 1. 计算 1m 实时 RSI (包含未完结的实时跳动价格)
+        curr_1m = klines_1m + [close_price]
+        rsi_1m = calculate_rsi(curr_1m)
+        check_and_notify("1m", close_price, rsi_1m)
+
+        # 2. 计算 10m 实时 RSI
+        curr_10m = klines_10m + [close_price]
+        rsi_10m = calculate_rsi(curr_10m)
+        check_and_notify("10m", close_price, rsi_10m)
+
+        if is_closed:
+            klines_1m.append(close_price)
+            if len(klines_1m) > 100:
+                klines_1m.pop(0)
+
+            # 聚合 10m 收盘价
+            temp_1m_buffer.append(close_price)
+            if len(temp_1m_buffer) >= 10:
+                klines_10m.append(close_price)
+                temp_1m_buffer.clear()
+                if len(klines_10m) > 100:
+                    klines_10m.pop(0)
+
+    elif interval == '1h':
+        # 3. 计算 1h 实时 RSI
+        curr_1h = klines_1h + [close_price]
+        rsi_1h = calculate_rsi(curr_1h)
+        check_and_notify("1h", close_price, rsi_1h)
+
+        if is_closed:
+            klines_1h.append(close_price)
+            if len(klines_1h) > 100:
+                klines_1h.pop(0)
+
+def on_error(ws, error):
+    print(f"WebSocket 连接报错: {error}")
+
+def on_close(ws, close_status_code, close_msg):
+    print("WebSocket 连接断开，3秒后自动尝试重连...")
+    time.sleep(3)
+    start_websocket()
+
+def start_websocket():
+    # 使用 Binance 多路径流 (Multiplexed Streams)，同时订阅 1m 和 1h 实时数据
+    # 采用标准 Spot 实时流节点，防封禁与防防火墙能力最佳
+    ws_url = "wss://stream.binance.com:9443/stream?streams=btcusdt@kline_1m/btcusdt@kline_1h"
+    
+    ws = websocket.WebSocketApp(
+        ws_url,
+        on_message=on_message,
+        on_error=on_error,
+        on_close=on_close
+    )
+    ws.run_forever()
+
+# 保活 HTTP 响应服务（防止 Render 免费版因为无端口监听导致部署失败）
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Binance RSI Monitor Running")
+
+def run_http_server():
+    port = int(os.getenv("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    server.serve_forever()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    print(f"[{get_beijing_time()}] 🚀 启动 BTCUSDT 多周期(1m/10m/1h) RSI 监控程序...")
+    
+    # 1. 预加载历史 K 线
+    fetch_initial_klines()
+    
+    # 2. 启动 Render 保活 HTTP 服务
+    threading.Thread(target=run_http_server, daemon=True).start()
+    
+    # 3. 开启 WebSocket 极速推送监听
+    start_websocket()
