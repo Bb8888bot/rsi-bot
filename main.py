@@ -3,20 +3,19 @@ import time
 import json
 import threading
 import requests
-import urllib.parse
 import websocket
-from flask import Flask, jsonify, Response
+from flask import Flask, jsonify, render_template_string
 
 app = Flask(__name__)
 
+# 环境变量配置
 TG_TOKEN = os.environ.get("BOT_TOKEN")
 TG_CHAT = os.environ.get("CHAT_ID")
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
 session = requests.Session()
 session.headers.update({"User-Agent": "Mozilla/5.0"})
 
-# 全局内存缓存（避免重复请求历史数据）
+# 全局数据与锁
 lock = threading.Lock()
 closes_1m = []
 last_kline_time = None
@@ -29,7 +28,7 @@ EVO_ENGINE = {
 
 DATA = {
     "price": 0.0, "rsi_1m": 50.0, "rsi_3m": 50.0, "rsi_5m": 50.0, "rsi_10m": 50.0, "rsi_1h": 50.0,
-    "title": "极速 WebSocket 引擎连接中", "advice": "正在建立数据流", "color": "#f0b90b", "time": "--",
+    "title": "极速 WebSocket 引擎连接中", "advice": "正在建立行情流", "color": "#f0b90b", "time": "--",
     "evo": {"total": 0, "wins": 0, "losses": 0, "win_rate": 100.0, "stage": "初始算法", "low": 15, "high": 85}
 }
 
@@ -37,13 +36,12 @@ def get_beijing_time():
     return time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() + 28800))
 
 def notify(title, text):
-    msg = f"{title}\n{text}\n时间: {get_beijing_time()}"
     if TG_TOKEN and TG_CHAT:
-        try: session.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", data={"chat_id": TG_CHAT, "text": msg}, timeout=3)
-        except Exception: pass
-    if WEBHOOK_URL:
-        try: session.post(WEBHOOK_URL.strip(), json={"msgtype": "text", "text": {"content": msg}}, timeout=3)
-        except Exception: pass
+        msg = f"{title}\n{text}\n时间: {get_beijing_time()}"
+        try:
+            session.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", data={"chat_id": TG_CHAT, "text": msg}, timeout=3)
+        except Exception as e:
+            print("推送失败:", e)
 
 def calc_rsi_wilder(prices, period=6):
     if len(prices) < period + 1: return 50.0
@@ -60,39 +58,29 @@ def calc_rsi_wilder(prices, period=6):
     if avg_l == 0: return 100.0 if avg_g > 0 else 50.0
     return round(100.0 - (100.0 / (1.0 + (avg_g / avg_l))), 2)
 
-def resample_closes(closes_1m, interval_min):
-    if interval_min == 1: return closes_1m
-    length = len(closes_1m)
-    remainder = length % interval_min
+def resample_closes(closes, interval_min):
+    if interval_min == 1 or not closes: return closes
+    remainder = len(closes) % interval_min
     start_idx = remainder if remainder > 0 else 0
     res = []
-    for i in range(start_idx, length, interval_min):
-        chunk = closes_1m[i:i + interval_min]
+    for i in range(start_idx, len(closes), interval_min):
+        chunk = closes[i:i + interval_min]
         if chunk: res.append(chunk[-1])
     return res
 
-# 仅在程序第一次启动时加载历史数据
+# 启动时抓取 1000 条历史 K 线初始化
 def init_history():
     global closes_1m
-    target_fapi = "https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1m&limit=1000"
-    endpoints = [
-        target_fapi,
-        f"https://corsproxy.io/?{urllib.parse.quote(target_fapi)}",
-        "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=1000"
-    ]
-    res = None
-    for u in endpoints:
-        try:
-            r = session.get(u, timeout=5.0)
-            if r.status_code == 200 and isinstance(r.json(), list):
-                res = r.json()
-                break
-        except Exception:
-            continue
-    if res:
-        with lock:
-            closes_1m = [float(k[4]) for k in res]
-            print(f"成功载入历史 K 线数据: {len(closes_1m)} 条")
+    url = "https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1m&limit=1000"
+    try:
+        r = session.get(url, timeout=5.0)
+        if r.status_code == 200:
+            res = r.json()
+            with lock:
+                closes_1m = [float(k[4]) for k in res]
+                print(f"成功直连加载历史 K 线: {len(closes_1m)} 条")
+    except Exception as e:
+        print("初始化历史数据异常:", e)
 
 def process_evolution(current_price):
     global EVO_ENGINE
@@ -128,7 +116,7 @@ def analyze(p, r1, r3, r5, r10, r1h):
     if r1 <= r_low: return f"触发自适应超卖警戒 (<={r_low})", "谨防反弹，可小仓看涨 (UP)", "#3b82f6", "UP_WEAK"
     return "事件合约常态运转中", f"等待极值点 (门槛: <={r_low} 或 >={r_high})", "#848e9c", "NONE"
 
-# WebSocket 长连接实时监听（毫秒级推流，无需走代理）
+# 币安原生 WebSocket 监听（毫秒级推流）
 last_signal_time = 0
 def on_ws_message(ws, message):
     global DATA, EVO_ENGINE, closes_1m, last_kline_time, last_signal_time
@@ -136,9 +124,7 @@ def on_ws_message(ws, message):
         data = json.loads(message)
         k = data.get("k", {})
         if not k: return
-        
-        p = float(k["c"])
-        k_time = k["t"]
+        p, k_time = float(k["c"]), k["t"]
         
         with lock:
             if not closes_1m:
@@ -147,8 +133,7 @@ def on_ws_message(ws, message):
             elif last_kline_time is None or k_time != last_kline_time:
                 last_kline_time = k_time
                 closes_1m.append(p)
-                if len(closes_1m) > 1000:
-                    closes_1m.pop(0)
+                if len(closes_1m) > 1000: closes_1m.pop(0)
             else:
                 closes_1m[-1] = p
 
@@ -171,11 +156,10 @@ def on_ws_message(ws, message):
             now = time.time()
             if sig_type in ["UP", "DOWN"] and (now - last_signal_time) > 180:
                 EVO_ENGINE["records"].append({"timestamp": now, "trigger_price": p, "direction": sig_type, "status": "PENDING", "result": "UNKNOWN"})
-                notify(f"🔥{title}", f"现价: ${p}\n指令: {adv}\n进化门槛: Low={EVO_ENGINE['dynamic_rsi_low']} High={EVO_ENGINE['dynamic_rsi_high']}")
+                notify(f"🔥{title}", f"现价: ${p}\n指令: {adv}\n门槛: Low={EVO_ENGINE['dynamic_rsi_low']} High={EVO_ENGINE['dynamic_rsi_high']}")
                 last_signal_time = now
-
     except Exception as e:
-        print("WS 数据解析异常:", e)
+        print("WS 发生错误:", e)
 
 def start_websocket():
     init_history()
@@ -185,16 +169,52 @@ def start_websocket():
             ws = websocket.WebSocketApp(
                 ws_url,
                 on_message=on_ws_message,
-                on_error=lambda ws, e: print("WS 错误:", e),
-                on_close=lambda ws, c, m: print("WS 断开重连...")
+                on_error=lambda ws, e: print("WS Error:", e),
+                on_close=lambda ws, c, m: print("WS 连接关闭，重连中...")
             )
             ws.run_forever(ping_interval=30, ping_timeout=10)
         except Exception: pass
-        time.sleep(3)
+        time.sleep(2)
 
 threading.Thread(target=start_websocket, daemon=True).start()
 
-HTML_PARTS = [
-    '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BTC 事件合约终端</title>',
-    '<style>body{font-family:sans-serif;padding:12px;background:#0b0e11;color:#eaecef;margin:0}.card{background:#181a20;padding:16px;border-radius:16px;max-width:420px;margin:auto;border:1px solid #2b2f36}h2{color:#f0b90b;font-size:17px;text-align:center;margin:0 0 10px 0}.evo-panel{background:#1e2329;padding:10px;border-radius:10px;margin-bottom:12px;border:1px solid #363c4e;font-size:12px}.evo-title{color:#f0b90b;font-weight:bold;margin-bottom:4px;display:flex;justify-content:space-between}.box{background:#2b2f36;padding:12px;border-radius:10px;margin:10px 0;border-left:5px solid #f0b90b}.title{font-size:12px;color:#848e9c;margin-bottom:2px}.val{font-size:14px;font-weight:bold}.item{display:flex;justify-content:space-between;margin:8px 0;font-size:13px;border-bottom:1px dashed #2b2f36;padding-bottom:4px}.v{font-weight:bold;color:#f0b90b}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.gbox{background:#2b2f36;padding:8px;border-radius:8px;text-align:center;font-size:11px}.gval{font-size:15px;font-weight:bold;margin-top:2px;color:#f0b90b}.time{color:#848e9c;font-size:10px;text-align:center;margin-top:10px}</style></head>',
-    '<body><div class="card"><h2>⚡ BTC 事件合约自适应进化终端</h2><div class="evo-panel"><div class="evo-title"><span id="estage">算法计算中...</span><span id="ewr" style="color:#10b981">胜率: 100%</span></div><div style="color:#848e9c">战绩统计: <span id="estat" style="color:#fff">0胜 0负 (总 0 单)</span> | 动态极值: <span id="ethres" style="color:#f0b90b">15 / 85</span></div></d
+HTML_PAGE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>BTC 极速量化终端</title>
+    <style>
+        body{font-family:sans-serif;padding:12px;background:#0b0e11;color:#eaecef;margin:0}
+        .card{background:#181a20;padding:16px;border-radius:16px;max-width:420px;margin:auto;border:1px solid #2b2f36}
+        h2{color:#f0b90b;font-size:17px;text-align:center;margin:0 0 10px 0}
+        .evo-panel{background:#1e2329;padding:10px;border-radius:10px;margin-bottom:12px;border:1px solid #363c4e;font-size:12px}
+        .evo-title{color:#f0b90b;font-weight:bold;margin-bottom:4px;display:flex;justify-content:space-between}
+        .box{background:#2b2f36;padding:12px;border-radius:10px;margin:10px 0;border-left:5px solid #f0b90b;transition: border-color 0.3s;}
+        .title{font-size:12px;color:#848e9c;margin-bottom:2px}
+        .val{font-size:14px;font-weight:bold}
+        .item{display:flex;justify-content:space-between;margin:8px 0;font-size:13px;border-bottom:1px dashed #2b2f36;padding-bottom:4px}
+        .v{font-weight:bold;color:#f0b90b}
+        .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+        .gbox{background:#2b2f36;padding:8px;border-radius:8px;text-align:center;font-size:11px}
+        .gval{font-size:15px;font-weight:bold;margin-top:2px;color:#f0b90b}
+        .time{color:#848e9c;font-size:10px;text-align:center;margin-top:10px}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>⚡ BTC 事件合约自适应终端 (极速版)</h2>
+        <div class="evo-panel">
+            <div class="evo-title">
+                <span id="estage">算法计算中...</span>
+                <span id="ewr" style="color:#10b981">胜率: 100%</span>
+            </div>
+            <div style="color:#848e9c">战绩: <span id="estat" style="color:#fff">0胜 0负</span> | 门槛: <span id="ethres" style="color:#f0b90b">15 / 85</span></div>
+        </div>
+        <div class="box" id="box">
+            <div class="title" id="stitle">加载中...</div>
+            <div class="val" id="sadv">连接行情中...</div>
+        </div>
+        <div class="item"><span>参考价</span><span class="v" id="pr">$0.00</span></div>
+        <div cl
