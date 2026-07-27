@@ -132,4 +132,64 @@ def monitor():
 
 threading.Thread(target=monitor, daemon=True).start()
 
-HTML_PAGE = '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BTC 事件合约自适应进化终端</title><style>body{font-family:sans-serif;padding:12px;background:#0b0e11;color:#eaecef;margin:0}.card{background:#181a20;padding:16px;border-radius:16px;max-width:420px;margin:auto;border:1px solid #2b2f36}h2{color:#f0b90b;font-size:17px;text-align:center;margin:0 0 10px 0}.evo-panel{background:#1e2329;padding:10px;border-radius:10px;margin-bottom:12px;border:1px solid #363c4e;font-size:12px}.evo-title{color:#f0b90b;font-weight:bold;margin-bottom:4px;display:flex;justify-content:space-between}.box{background:#2b2f36;padding:12px;border-radius:10px;margin:10px 0;border-left:5px solid #f0b90b}.title{font-size:12px;color:#848e9c;margin-bottom:2px}.val{font-size:14px;font-weight:bold}.item{display:flex;justify-content:space-between;margin:8px 0;font-size:13px;border-bottom:1px dashed #2b2f36;padding-bottom:4px}.v{font-weight:bold;color:#f0b90b}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.gbox{background:#2b2f36;padding:8px;border-radius:8px;text-align:center;font-size:11px}.gval{font-size:15px;font-weight:bold;margin-top:2px;color:#f0b90b}.time{color:#848e9c;font-size:10px;text-align:center;margin-top:10px}</style></head><body><div class="card"><h2>⚡ BTC 事件合约自适应进化终端</h2><div class="evo-panel"><div class="evo-title"><span id="estage">算法自适应计算中...</span><span id="ewr" style="color:#10b981">胜率: 100%</span></div><div style="color:#848e9c">战绩统计: <span id="estat" style="color:#fff">0胜 0负 (总 0 单)</span> | 动态极值: <span id="ethres" style="color:#f0b90b">15 / 85</span></div></div><div class="box" id="box"><div class="title" id="stitle">加载中...</div><div class="val" id="sadv">连接行情中...</div></div><div class="item"><span>参考价</span><span class="v" id="pr">$0.00</span></div><div class="grid"><div class="gbox"><div>1m RSI(6)</div><div class="gval" id="r1">--</div></div><div class="gbox"><div>3m RSI(6)</div><div class="gval" id="r3">--</div></div><div class="gbox"><div>5m RSI(6)</div><div class="gval" id="r5">--</div></div><div class="gbox"><div>10m RSI(6)</div><div class="gval" id="r10">--</div></div></div><div class="item" style="margin-top:10px"><span>1h RSI(6) [大趋势]</span><span class="v" id="r1h">--</span></div><div class="time">更新时间 (北京时间): <br><span id="ut" style="color:#f0b90b;font-weight:bold">--</span></div></div><script>function up(){fetch("/api/data?_t="+Date.now()).then(r=>r.json()).then(d=>{document.getElementById("pr").innerText="$"+d.price.toFixed(2);document.getElementById("r1").innerText=d.rsi_1m;document.getElementById("r3").innerText=d.rsi_3m;document.getElementById("r5").innerText=d.rsi_5m;document.getElementById("r10").innerText=d.rsi_10m;document.getElementById("r1h").innerText=d.rsi_1h;document.getElementById("stitle").innerText=d.title;document.getElementById("sadv").innerText=d.advice;document.getElementById("sadv").style.color=d.color;document.getElementById("box").style.borderLeftColor=d.color;document.getElementById("ut").innerText=d.time;if(d.evo){document.getElementById("estage").innerText=d.evo.stage;document.getElementById("ewr").innerText="胜率: "+d.evo.win_rate+"%";document.getElementByI
+HTML_PAGE = """<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BTC 事件合约自适应进化终端</title>
+<style>
+body{font-family:sans-serif;padding:12px;background:#0b0e11;color:#eaecef;margin:0}
+.card{background:#181a20;padding:16px;border-radius:16px;max-width:420px;margin:auto;border:1px solid #2b2f36}
+h2{color:#f0b90b;font-size:17px;text-align:center;margin:0 0 10px 0}
+.evo-panel{background:#1e2329;padding:10px;border-radius:10px;margin-bottom:12px;border:1px solid #363c4e;font-size:12px}
+.evo-title{color:#f0b90b;font-weight:bold;margin-bottom:4px;display:flex;justify-content:space-between}
+.box{background:#2b2f36;padding:12px;border-radius:10px;margin:10px 0;border-left:5px solid #f0b90b}
+.title{font-size:12px;color:#848e9c;margin-bottom:2px}
+.val{font-size:14px;font-weight:bold}
+.item{display:flex;justify-content:space-between;margin:8px 0;font-size:13px;border-bottom:1px dashed #2b2f36;padding-bottom:4px}
+.v{font-weight:bold;color:#f0b90b}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.gbox{background:#2b2f36;padding:8px;border-radius:8px;text-align:center;font-size:11px}
+.gval{font-size:15px;font-weight:bold;margin-top:2px;color:#f0b90b}
+.time{color:#848e9c;font-size:10px;text-align:center;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="card">
+<h2>⚡ BTC 事件合约自适应进化终端</h2>
+<div class="evo-panel">
+<div class="evo-title"><span id="estage">算法自适应计算中...</span><span id="ewr" style="color:#10b981">胜率: 100%</span></div>
+<div style="color:#848e9c">战绩统计: <span id="estat" style="color:#fff">0胜 0负 (总 0 单)</span> | 动态极值: <span id="ethres" style="color:#f0b90b">15 / 85</span></div>
+</div>
+<div class="box" id="box">
+<div class="title" id="stitle">加载中...</div>
+<div class="val" id="sadv">连接行情中...</div>
+</div>
+<div class="item"><span>参考价</span><span class="v" id="pr">$0.00</span></div>
+<div class="grid">
+<div class="gbox"><div>1m RSI(6)</div><div class="gval" id="r1">--</div></div>
+<div class="gbox"><div>3m RSI(6)</div><div class="gval" id="r3">--</div></div>
+<div class="gbox"><div>5m RSI(6)</div><div class="gval" id="r5">--</div></div>
+<div class="gbox"><div>10m RSI(6)</div><div class="gval" id="r10">--</div></div>
+</div>
+<div class="item" style="margin-top:10px"><span>1h RSI(6) [大趋势]</span><span class="v" id="r1h">--</span></div>
+<div class="time">更新时间 (北京时间): <br><span id="ut" style="color:#f0b90b;font-weight:bold">--</span></div>
+</div>
+<script>
+function up(){
+fetch("/api/data?_t="+Date.now()).then(r=>r.json()).then(d=>{
+document.getElementById("pr").innerText="$"+d.price.toFixed(2);
+document.getElementById("r1").innerText=d.rsi_1m;
+document.getElementById("r3").innerText=d.rsi_3m;
+document.getElementById("r5").innerText=d.rsi_5m;
+document.getElementById("r10").innerText=d.rsi_10m;
+document.getElementById("r1h").innerText=d.rsi_1h;
+document.getElementById("stitle").innerText=d.title;
+document.getElementById("sadv").innerText=d.advice;
+document.getElementById("sadv").style.color=d.color;
+document.getElementById("box").style.borderLeftColor=d.color;
+document.getElementById("ut").innerText=d.time;
+if(d.evo){
+document.getElementById("estage").innerText=d.evo.stage;
+document.getElementById("ew
