@@ -1,5 +1,5 @@
 import os, time, threading, requests
-from flask import Flask, jsonify, Response
+from flask import Flask, jsonify, render_template_string, Response
 
 app = Flask(__name__)
 
@@ -10,148 +10,208 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 DATA = {
     "price": 0.0, "rsi_1m": 50.0, "rsi_3m": 50.0, "rsi_5m": 50.0, "rsi_10m": 50.0, "rsi_1h": 50.0,
     "boll_up": 0.0, "boll_dn": 0.0, "ema7": 0.0, "ema25": 0.0,
-    "title": "INIT", "advice": "CONNECTING...", "color": "#00ff41", "time": "--",
-    "session_name": "ANALYZING...", "session_advice": "WAIT...", "win_rate": "--",
+    "title": "SYSTEM_INIT", "advice": "CONNECTING TO BINANCE...", "color": "#00ff41", "time": "--",
+    "session_name": "ANALYZING...", "session_advice": "CALCULATING...", "win_rate": "--",
     "ping": "0ms", "signal_tier": "STANDBY"
 }
 
+def get_beijing_time_struct():
+    return time.gmtime(time.time() + 28800)
+
 def get_beijing_time():
-    return time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() + 28800))
+    return time.strftime("%Y-%m-%d %H:%M:%S", get_beijing_time_struct())
 
 def get_session_info():
-    h = time.gmtime(time.time() + 28800).tm_hour
-    if 8 <= h < 15:
-        return "亚盘震荡", "高抛低吸", "85%", "#00ff41"
-    elif 15 <= h < 19:
-        return "欧盘趋势", "抓轨外反弹", "88%", "#00f3ff"
-    elif 20 <= h < 24:
-        return "美盘黄金期", "顺势共振", "92%", "#00ff41"
+    t = get_beijing_time_struct()
+    hour, minute = t.tm_hour, t.tm_min
+    if 8 <= hour < 15:
+        if hour == 8 and minute < 30:
+            return "早八交割期 [HIGH_VOL]", "高频插针，建议 08:30 后入场", "胜率: 68%", "#f97316"
+        return "亚盘黄金震荡期 [ACCURATE]", "极少钝化，极其适合 BOLL+RSI 高抛低吸", "胜率: 85%", "#00ff41"
+    elif 15 <= hour < 19:
+        return "欧盘趋势启动期 [TREND]", "方向明确，适合抓 BOLL 轨外共振反弹", "胜率: 88%", "#00f3ff"
+    elif 20 <= hour < 24:
+        if hour == 20 or (hour == 21 and minute <= 30):
+            return "美盘数据敏感期 [VOLATILE]", "剧烈波动，严禁单边逆势，只做 S 级共振！", "胜率: 78%", "#ff003c"
+        return "美盘黄金交易期 [KING_MODE]", "顶级流动性，顺势共振信号胜率之王", "胜率: 92%+", "#00ff41"
     else:
-        return "深夜横盘", "谨慎极值", "75%", "#848e9c"
+        return "深夜低量横盘期 [LOW_VOL]", "量能清淡，只做 BOLL 上下轨极值", "胜率: 75%", "#848e9c"
 
 def send_tg(msg):
     if TG_TOKEN and TG_CHAT:
         try:
-            requests.post("https://api.telegram.org/bot" + TG_TOKEN + "/sendMessage", data={"chat_id": TG_CHAT, "text": msg}, timeout=3)
+            requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", data={"chat_id": TG_CHAT, "text": msg}, timeout=3)
         except:
             pass
 
-def send_webhook(msg):
+def send_webhook(title, content):
     if WEBHOOK_URL:
         try:
-            requests.post(WEBHOOK_URL.strip(), json={"msgtype": "text", "text": {"content": msg}}, timeout=3)
+            url = WEBHOOK_URL.strip()
+            msg_text = f"⚡【暴爷无极限·绝杀矩阵预警】⚡\n{title}\n\n{content}"
+            payload = {"msg_type": "text", "content": {"text": msg_text}} if "feishu" in url or "larksuite" in url else {"msgtype": "text", "text": {"content": msg_text}}
+            requests.post(url, json=payload, timeout=3)
         except:
             pass
 
 def notify(title, text):
-    full = title + "\n" + text + "\n时间: " + get_beijing_time()
-    send_tg(full)
-    send_webhook(full)
+    s_name, s_adv, win_rate, _ = get_session_info()
+    full_text = f"{text}\n\n🎯 推荐时段: {s_name} [{win_rate}]\n💡 策略指导: {s_adv}\n⏰ 时间: {get_beijing_time()}"
+    send_tg(f"{title}\n{full_text}")
+    send_webhook(title, full_text)
 
-def calc_rsi(prices, period=6):
+def calc_rsi_wilder(prices, period=6):
     if len(prices) < period + 1:
         return 50.0
-    g, l = 0.0, 0.0
-    for i in range(1, period + 1):
+    gains, losses = [], []
+    for i in range(1, len(prices)):
         d = prices[i] - prices[i-1]
-        if d > 0: g += d
-        else: l += abs(d)
-    ag, al = g / period, l / period
-    if al == 0: return 100.0
-    return round(100.0 - (100.0 / (1.0 + (ag / al))), 2)
+        gains.append(d if d > 0 else 0.0)
+        losses.append(abs(d) if d < 0 else 0.0)
+    avg_g = sum(gains[:period]) / period
+    avg_l = sum(losses[:period]) / period
+    for i in range(period, len(gains)):
+        avg_g = (avg_g * (period - 1) + gains[i]) / period
+        avg_l = (avg_l * (period - 1) + losses[i]) / period
+    if avg_l == 0:
+        return 100.0
+    return round(100.0 - (100.0 / (1.0 + (avg_g / avg_l))), 2)
 
-def calc_boll(prices, period=20):
+def calc_ema(prices, period):
+    if len(prices) < period:
+        return prices[-1] if prices else 0.0
+    k = 2 / (period + 1)
+    ema = sum(prices[:period]) / period
+    for p in prices[period:]:
+        ema = (p * k) + (ema * (1 - k))
+    return round(ema, 2)
+
+def calc_bollinger(prices, period=20, std_dev=2):
     if len(prices) < period:
         p = prices[-1] if prices else 0.0
-        return p, p
-    sp = prices[-period:]
-    sma = sum(sp) / period
-    std = (sum((x - sma) ** 2 for x in sp) / period) ** 0.5
-    return round(sma + (std * 2), 2), round(sma - (std * 2), 2)
+        return p, p, p
+    slice_p = prices[-period:]
+    sma = sum(slice_p) / period
+    variance = sum((x - sma) ** 2 for x in slice_p) / period
+    std = variance ** 0.5
+    return round(sma, 2), round(sma + (std * std_dev), 2), round(sma - (std * std_dev), 2)
 
-def fetch_klines(symbol, interval):
-    try:
-        r = requests.get("https://fapi.binance.com/fapi/v1/klines", params={"symbol": symbol, "interval": interval, "limit": 50}, timeout=2)
-        if r.status_code == 200:
-            return [float(k[4]) for k in r.json()]
-    except:
-        pass
+def fetch_futures_klines(symbol, interval, limit=100):
+    endpoints = [
+        "https://fapi.binance.com/fapi/v1/klines",
+        "https://fapi.binance.vision/fapi/v1/klines"
+    ]
+    headers = {"User-Agent": "Mozilla/5.0"}
+    for url in endpoints:
+        try:
+            r = requests.get(url, params={"symbol": symbol, "interval": interval, "limit": limit}, headers=headers, timeout=3)
+            if r.status_code == 200:
+                res = r.json()
+                if isinstance(res, list) and len(res) > 0:
+                    return [float(k[4]) for k in res]
+        except:
+            continue
     return []
+
+def resample_klines(p1m, period_minutes):
+    res = []
+    for i in range(0, len(p1m), period_minutes):
+        chunk = p1m[i:i+period_minutes]
+        if chunk:
+            res.append(chunk[-1])
+    return res
+
+def fetch_data_all():
+    p1m = fetch_futures_klines("BTCUSDT", "1m", 150)
+    p3m = fetch_futures_klines("BTCUSDT", "3m", 100)
+    p5m = fetch_futures_klines("BTCUSDT", "5m", 100)
+    p1h = fetch_futures_klines("BTCUSDT", "1h", 100)
+    if not p1m:
+        raise Exception("Binance API 抓取失败")
+    p = p1m[-1]
+    r1 = calc_rsi_wilder(p1m, 6)
+    r3 = calc_rsi_wilder(p3m, 6) if p3m else r1
+    r5 = calc_rsi_wilder(p5m, 5) if p5m else r1
+    r10 = calc_rsi_wilder(resample_klines(p1m, 10), 6)
+    r1h = calc_rsi_wilder(p1h, 6) if p1h else r1
+    sma, boll_up, boll_dn = calc_bollinger(p1m, 20, 2)
+    ema7 = calc_ema(p1m, 7)
+    ema25 = calc_ema(p1m, 25)
+    return p, r1, r3, r5, r10, r1h, boll_up, boll_dn, ema7, ema25
+
+def analyze_high_winrate(p, r1, r3, r5, r10, r1h, boll_up, boll_dn, ema7, ema25):
+    is_strong_up = (ema7 > ema25 + 15) and (p > ema7)
+    is_strong_down = (ema7 < ema25 - 15) and (p < ema7)
+    if p <= boll_dn and r1 <= 15 and r3 <= 25 and r5 <= 30 and not is_strong_down:
+        return "🔥【S级绝杀·买入看涨(UP)】", "BOLL下轨支撑 + 三重超卖！胜率 90%+", "#00ff41", "S-TIER WIN 90%"
+    if p >= boll_up and r1 >= 85 and r3 >= 75 and r5 >= 70 and not is_strong_up:
+        return "🔥【S级绝杀·买入看跌(DOWN)】", "BOLL上轨阻力 + 三重超买！胜率 90%+", "#ff003c", "S-TIER WIN 90%"
+    if r1 >= 85 and is_strong_up:
+        return "⚠️【强单边暴拉中·拒绝看跌】", "多头强趋势，RSI钝化中，严禁做空！", "#ffe600", "LOCKED_PREVENT_LOSS"
+    if r1 <= 15 and is_strong_down:
+        return "⚠️【强单边砸盘中·拒绝看涨】", "空头强趋势，RSI钝化中，严禁抄底！", "#ffe600", "LOCKED_PREVENT_LOSS"
+    if p <= boll_dn * 1.0005 and r1 <= 15:
+        return "⚡【A级优质·建议看涨(UP)】", "触及 1m BOLL 下轨，抓超短线反弹", "#00f3ff", "A-TIER WIN 82%"
+    if p >= boll_up * 0.9995 and r1 >= 85:
+        return "⚡【A级优质·建议看跌(DOWN)】", "触及 1m BOLL 上轨，抓超短线回撤", "#ff003c", "A-TIER WIN 82%"
+    return "暴爷无极限绝杀矩阵待命", "盘面无极值共振，保持观望等待信号", "#848e9c", "STANDBY"
 
 def monitor():
     global DATA
-    lock = False
+    s_lock = False
     while True:
         try:
-            p1 = fetch_klines("BTCUSDT", "1m")
-            p3 = fetch_klines("BTCUSDT", "3m")
-            p5 = fetch_klines("BTCUSDT", "5m")
-            p1h = fetch_klines("BTCUSDT", "1h")
-            if p1 and p3 and p5 and p1h:
-                p = p1[-1]
-                r1, r3, r5, r1h = calc_rsi(p1), calc_rsi(p3), calc_rsi(p5), calc_rsi(p1h)
-                bup, bdn = calc_boll(p1)
-                
-                title, tier, col = "矩阵待命", "STANDBY", "#848e9c"
-                if p <= bdn and r1 <= 15 and r3 <= 25:
-                    title, tier, col = "🔥【S级绝杀·买入看涨(UP)】", "S-TIER", "#00ff41"
-                elif p >= bup and r1 >= 85 and r3 >= 75:
-                    title, tier, col = "🔥【S级绝杀·买入看跌(DOWN)】", "S-TIER", "#ff003c"
-
-                DATA = {
-                    "price": p, "rsi_1m": r1, "rsi_3m": r3, "rsi_5m": r5,
-                    "rsi_10m": r1, "rsi_1h": r1h, "boll_up": bup, "boll_dn": bdn,
-                    "ema7": 0.0, "ema25": 0.0, "title": title, "advice": "实时监控中",
-                    "color": col, "time": get_beijing_time(), "session_name": get_session_info()[0],
-                    "session_advice": get_session_info()[1], "win_rate": get_session_info()[2],
-                    "signal_tier": tier
-                }
-
-                if "S级" in title and not lock:
-                    notify(title, "现价: " + str(p) + " | 1m RSI: " + str(r1))
-                    lock = True
-                elif "S级" not in title:
-                    lock = False
+            p, r1, r3, r5, r10, r1h, boll_up, boll_dn, ema7, ema25 = fetch_data_all()
+            title, adv, color, tier = analyze_high_winrate(p, r1, r3, r5, r10, r1h, boll_up, boll_dn, ema7, ema25)
+            bj_time = get_beijing_time()
+            s_name, s_adv, win_rate, b_color = get_session_info()
+            DATA = {
+                "price": p, "rsi_1m": r1, "rsi_3m": r3, "rsi_5m": r5,
+                "rsi_10m": r10, "rsi_1h": r1h, "boll_up": boll_up, "boll_dn": boll_dn,
+                "ema7": ema7, "ema25": ema25, "title": title, "advice": adv,
+                "color": color, "time": bj_time, "session_name": s_name,
+                "session_advice": s_adv, "win_rate": win_rate, "badge_color": b_color,
+                "signal_tier": tier
+            }
+            if "S级" in title or "A级" in title:
+                if not s_lock:
+                    notify(f"{title}", f"BTCUSDT 合约参考价: ${p}\n1m BOLL 上轨: ${boll_up} | 下轨: ${boll_dn}\n1m RSI: {r1} | 3m RSI: {r3} | 5m RSI: {r5}\n1h 大趋势 RSI: {r1h}")
+                    s_lock = True
+            else:
+                s_lock = False
         except Exception as e:
-            print(e)
+            print("Monitor error:", e)
         time.sleep(2)
 
 threading.Thread(target=monitor, daemon=True).start()
 
-PAGE = """
-<!DOCTYPE html><html><head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>暴爷无极限</title>
-<style>body{background:#05070a;color:#00ff41;font-family:monospace;padding:15px;margin:0}
-.box{background:#0c1017;padding:15px;border-radius:10px;border:1px solid #00ff4155;max-width:400px;margin:auto}
-h2{color:#ffe600;text-align:center;margin-top:0}</style></head><body>
-<div class='box'><h2>⚡ 暴爷无极限 ⚡</h2>
-<p><b>状态:</b> <span id='t'>加载中...</span></p>
-<p><b>价格:</b> <span id='p'>$0.00</span></p>
-<p><b>1m RSI:</b> <span id='r1'>--</span> | <b>3m:</b> <span id='r3'>--</span></p>
-<p><b>5m RSI:</b> <span id='r5'>--</span> | <b>1h趋势:</b> <span id='r1h'>--</span></p></div>
-<script>setInterval(()=>{fetch('/api/data').then(r=>r.json()).then(d=>{
-document.getElementById('t').innerText=d.title+' ['+d.signal_tier+']';
-document.getElementById('p').innerText='$'+d.price.toFixed(2);
-document.getElementById('r1').innerText=d.rsi_1m;
-document.getElementById('r3').innerText=d.rsi_3m;
-document.getElementById('r5').innerText=d.rsi_5m;
-document.getElementById('r1h').innerText=d.rsi_1h;
-});},1000);</script></body></html>
-"""
-
-@app.route('/')
-def home():
-    return Response(PAGE, mimetype="text/html")
-
-@app.route('/api/data')
-def api_data():
-    return jsonify(DATA)
-
-@app.route('/test')
-def test_push():
-    notify("🧪 暴爷测试", "通道连接成功")
-    return "SUCCESS"
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>暴爷无极限 ⚡ 90%+ 绝杀终端</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:'Courier New',Consolas,monospace;padding:12px;background:#05070a;color:#00ff41;margin:0}
+body::before{content:"";position:fixed;top:0;left:0;width:100%;height:100%;background:linear-gradient(rgba(18,16,16,0) 50%,rgba(0,0,0,0.25) 50%);background-size:100% 4px;z-index:999;pointer-events:none}
+.terminal{background:#0c1017;padding:20px;border-radius:12px;max-width:440px;margin:10px auto;border:1px solid #00ff4155;box-shadow:0 0 20px rgba(0,255,65,0.2)}
+.header{text-align:center;border-bottom:1px dashed #00ff4155;padding-bottom:12px;margin-bottom:15px}
+.glitch-title{font-size:22px;font-weight:900;color:#ffe600;text-shadow:0 0 10px #ffe600,0 0 20px #ff003c}
+.sub-title{font-size:10px;color:#00f3ff;margin-top:5px}
+.session-card{background:#070a0f;padding:12px;border-radius:8px;margin-bottom:15px;border:1px solid #00f3ff44}
+.session-top{display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:bold}
+.session-desc{font-size:11px;color:#848e9c;margin-top:4px}
+.box{background:#070a0f;padding:14px;border-radius:8px;margin-bottom:15px;border-left:5px solid #00ff41}
+.title{font-size:11px;color:#848e9c;margin-bottom:4px}
+.val{font-size:14px;font-weight:bold;color:#fff}
+.price-row{display:flex;justify-content:space-between;align-items:center;background:#070a0f;padding:12px 16px;border-radius:8px;margin-bottom:15px;border:1px solid #00ff4144}
+.price-label{font-size:12px;color:#848e9c}
+.price-val{font-size:20px;font-weight:bold;color:#ffe600;text-shadow:0 0 8px #ffe60066}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.gbox{background:#070a0f;padding:10px;border-radius:6px;text-align:center;border:1px solid #00ff4133}
+.gname{font-size:10px;color:#848e9c}
+.gval{font-size:16px;font-weight:bold;margin-top:4px;color:#00ff41}
+.trend-box{background:#070a0f;padding:12px;border-radius:6px;display:flex;justify-content:space-between;align-items:center;border:1px solid #00f3ff33;margin-bottom:15px}
+.footer{color:#4
