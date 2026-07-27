@@ -3,18 +3,19 @@ import time
 import threading
 import requests
 import smtplib
-import collections
 from email.mime.text import MIMEText
 from email.header import Header
 from flask import Flask, jsonify, Response
 
 app = Flask(__name__)
 
+# 环境变量
 TELEGRAM_BOT_TOKEN = os.environ.get("BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("CHAT_ID")
 QQ_USER = os.environ.get("QQ_USER")
 QQ_PASS = os.environ.get("QQ_PASS")
 
+# 实时数据全局缓存
 LATEST_DATA = {
     "price": 0.0,
     "rsi_1m": 0.0,
@@ -23,10 +24,12 @@ LATEST_DATA = {
     "rsi_10m": 0.0,
     "rsi_1h": 0.0,
     "signal_title": "初始化中",
-    "advice": "正在连接事件合约行情源",
+    "advice": "正在连接事件合约数据源",
     "color": "#f0b90b",
     "update_time": "--"
 }
+
+# ----------------- 通知模块 -----------------
 
 def send_tg(msg):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -57,7 +60,9 @@ def send_email(subject, content):
 def notify(title, detail_text):
     send_tg(f"{title}\n{detail_text}")
     clean_text = detail_text.replace("*", "").replace("`", "")
-    send_email(title, f"{title}\n\n{clean_text}\n\n发送时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    send_email(title, f"{title}\n\n{clean_text}\n\n发送时间: " + time.strftime("%Y-%m-%d %H:%M:%S"))
+
+# ----------------- 计算模块 -----------------
 
 def calc_rsi(prices, period=6):
     if len(prices) < period + 1:
@@ -124,6 +129,8 @@ def analyze_all_indicators(price, rsi_1m, rsi_3m, rsi_5m, rsi_10m, rsi_1h):
         return "事件合约触发极度超卖警戒 (≤ 15)", "谨防快速回升，可小仓买入看涨 (UP)", "#3b82f6"
     else:
         return "事件合约常态运转中", "建议观望，等待 >85 或 <15 极值信号", "#848e9c"
+
+# ----------------- Web 前端界面 -----------------
 
 HTML_CONTENT = """<!DOCTYPE html>
 <html>
@@ -193,6 +200,8 @@ def home():
 def api_data():
     return jsonify(LATEST_DATA)
 
+# ----------------- 1秒后台监控线程 -----------------
+
 def monitor():
     global LATEST_DATA
     s_1m_high, s_1m_low = False, False
@@ -218,23 +227,20 @@ def monitor():
                 "update_time": now_str
             }
 
-            if rsi_1m >= 85 and not s_1m_high:
-                notify("🚨 【事件合约预警】BTC 1m RSI 极度超买！", f"参考价格: `${price}`\n1m RSI(6): *{rsi_1m}* (≥ 85)")
+            # 1m RSI 预警
+            if rsi_1m and rsi_1m >= 85 and not s_1m_high:
+                notify("🚨【事件合约预警】BTC 1m RSI 极度超买！", f"参考价格: ${price}\n1m RSI(6): {rsi_1m} (>= 85)")
                 s_1m_high = True
-            elif rsi_1m <= 15 and not s_1m_low:
-                notify("🟢 【事件合约预警】BTC 1m RSI 极度超卖！", f"参考价格: `${price}`\n1m RSI(6): *{rsi_1m}* (≤ 15)")
+            elif rsi_1m and rsi_1m <= 15 and not s_1m_low:
+                notify("🟢【事件合约预警】BTC 1m RSI 极度超卖！", f"参考价格: ${price}\n1m RSI(6): {rsi_1m} (<= 15)")
                 s_1m_low = True
-            elif 25 < rsi_1m < 75:
+            elif rsi_1m and 25 < rsi_1m < 75:
                 s_1m_high, s_1m_low = False, False
 
-            if rsi_10m >= 85 and not s_10m_high:
-                notify("🚨 【事件合约重磅】BTC 10m RSI 极度超买！", f"参考价格: `${price}`\n10m RSI(6): *{rsi_10m}* (≥ 85)")
+            # 10m RSI 预警
+            if rsi_10m and rsi_10m >= 85 and not s_10m_high:
+                notify("🚨【事件合约重磅】BTC 10m RSI 极度超买！", f"参考价格: ${price}\n10m RSI(6): {rsi_10m} (>= 85)")
                 s_10m_high = True
-            elif rsi_10m <= 15 and not s_10m_low:
-                notify("🟢 【事件合约重磅】BTC 10m RSI 极度超卖！", f"参考价格: `${price}`\n10m RSI(6): *{rsi_10m}* (≤ 15)")
-                s_10m_low = True
-            elif 25 < rsi_10m < 75:
-                s_10m_high, s_10m_low = False, False
-
-            if rsi_1h >= 50 and rsi_10m <= 30 and rsi_1m <= 15 and not s_combo:
-                notify("🔥【85%+ 高胜率信号】买入看涨 (UP)！", f"参考价格: `${price}`\n1h: {rs
+            elif rsi_10m and rsi_10m <= 15 and not s_10m_low:
+                notify("🟢【事件合约重磅】BTC 10m RSI 极度超卖！", f"参考价格: ${price}\n10m RSI(6): {rsi_10m} (<= 15)")
+       
