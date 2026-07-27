@@ -10,22 +10,8 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 DATA = {
     "price": 0.0, "rsi_1m": 50.0, "rsi_10m": 50.0, "rsi_1h": 50.0,
     "boll_up": 0.0, "boll_mb": 0.0, "boll_dn": 0.0, "ema7": 0.0, "ema25": 0.0, "ema99": 0.0,
-    "title": "实时监控中", "advice": "等待 1m/10m RSI 达到 <=15 或 >=85 极值共振", "win_rate": "85%", "session_name": "亚盘震荡期"
+    "title": "实时监控中 (等待极值)", "action": "观望中 — 守候 1m/10m RSI <=15 或 >=85", "color": "#00ff41"
 }
-
-def get_beijing_time():
-    return time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() + 28800))
-
-def get_session_info():
-    h = time.gmtime(time.time() + 28800).tm_hour
-    if 8 <= h < 15:
-        return "亚盘黄金震荡期", "极少钝化，适合 BOLL 轨外极值高抛低吸", "85%"
-    elif 15 <= h < 19:
-        return "欧盘趋势启动期", "方向明确，抓轨道外共振反弹", "88%"
-    elif 20 <= h < 24:
-        return "美盘黄金交易期", "顶级流动性，顺势共振核心时段", "92%+"
-    else:
-        return "深夜低量横盘期", "量能清淡，仅做上下轨极端防守", "75%"
 
 def send_tg(msg):
     if TG_TOKEN and TG_CHAT:
@@ -42,8 +28,7 @@ def send_webhook(msg):
             pass
 
 def notify(title, text):
-    s_name, s_adv, win_rate = get_session_info()
-    full = title + "\n" + text + "\n推荐时段: " + s_name + " [胜率: " + win_rate + "]\n战法指导: " + s_adv + "\n时间: " + get_beijing_time()
+    full = title + "\n" + text + "\n时间: " + time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() + 28800))
     send_tg(full)
     send_webhook(full)
 
@@ -86,7 +71,6 @@ def resample_klines(p1m, period_minutes):
     return res
 
 def fetch_binance_public(interval, limit=120):
-    # 使用币安官方公开 Spot API 节点，对云服务器 IP 极其友好，永不被封
     url = "https://api.binance.com/api/v3/klines"
     params = {"symbol": "BTCUSDT", "interval": interval, "limit": limit}
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -119,29 +103,31 @@ def monitor():
                 e25 = calc_ema(p1m, 25)
                 e99 = calc_ema(p1h, 99) if p1h else e25
 
-                title = "⚡ 矩阵待命中 (无极值)"
-                advice = "等待 1m/10m RSI 触及 <=15 (看涨) 或 >=85 (看跌) 极值"
-                
-                # 严格按照咱们约定的数值标准：1m 和 10m 同时达到 <=15 或 >=85
-                if r1m <= 15 and r10m <= 25:
-                    title = "🔥【S级绝杀·买入看涨(UP)】"
-                    advice = "1m/10m RSI 触及超卖极值，配合 BOLL 下轨果断开涨！"
-                elif r1m >= 85 and r10m >= 75:
-                    title = "🔥【S级绝杀·买入看跌(DOWN)】"
-                    advice = "1m/10m RSI 触及超买极值，配合 BOLL 上轨果断开跌！"
+                title = "⚡ 实时监控中 (安全观望)"
+                action = "保持观望 — 等待 1m/10m RSI 触及极值"
+                color = "#00ff41"
 
-                s_name, s_adv, win_rate = get_session_info()
+                # 核心做单指令触发
+                if r1m <= 15 and r10m <= 25:
+                    title = "🔥【S级绝杀·买入看涨 (UP)】"
+                    action = "立刻开仓：买入看涨 (UP)！(超卖共振)"
+                    color = "#00ff41"
+                elif r1m >= 85 and r10m >= 75:
+                    title = "🔥【S级绝杀·买入看跌 (DOWN)】"
+                    action = "立刻开仓：买入看跌 (DOWN)！(超买共振)"
+                    color = "#ff003c"
+
                 DATA = {
                     "price": p, "rsi_1m": r1m, "rsi_10m": r10m, "rsi_1h": r1h,
                     "boll_up": bup, "boll_mb": bmb, "boll_dn": bdn,
                     "ema7": e7, "ema25": e25, "ema99": e99,
-                    "title": title, "advice": advice, "win_rate": win_rate, "session_name": s_name
+                    "title": title, "action": action, "color": color
                 }
 
-                if "S级" in title and not lock:
-                    notify(title, "现价: $" + str(p) + " | 1m RSI: " + str(r1m) + " | 10m RSI: " + str(r10m) + "\nBOLL下轨: " + str(bdn) + " | 上轨: " + str(bup))
+                if "S级绝杀" in title and not lock:
+                    notify(title, "现价: $" + str(p) + "\n操作指令: " + action + "\n1m RSI: " + str(r1m) + " | 10m RSI: " + str(r10m))
                     lock = True
-                elif "S级" not in title:
+                elif "S级绝杀" not in title:
                     lock = False
         except Exception as e:
             print(e)
@@ -151,34 +137,32 @@ threading.Thread(target=monitor, daemon=True).start()
 
 PAGE = """<!DOCTYPE html><html><head><meta charset='utf-8'>
 <meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>暴爷事件合约终端</title>
+<title>暴爷事件合约实战终端</title>
 <style>body{background:#05070a;color:#00ff41;font-family:monospace;padding:15px;margin:0}
 .box{background:#0c1017;padding:15px;border-radius:10px;border:1px solid #00ff4155;max-width:400px;margin:auto}
 h2{color:#ffe600;text-align:center;margin-top:0}
-.row{display:flex;justify-content:space-between;margin:6px 0;font-size:12px}
+.row{display:flex;justify-content:space-between;margin:8px 0;font-size:13px}
 </style></head><body>
-<div class='box'><h2>⚡ 暴爷事件合约 ⚡</h2>
-<div class='row'><b>当前时段:</b> <span id='sn' style='color:#00f3ff'>--</span> [胜率: <span id='sw' style='color:#ffe600'>--</span>]</div>
-<div class='row'><b>信号状态:</b> <span id='t' style='color:#ff003c;font-weight:bold'>连接中...</span></div>
+<div class='box'><h2>⚡ 暴爷事件合约实战 ⚡</h2>
+<div class='row'><b>信号状态:</b> <span id='t' style='color:#00ff41;font-weight:bold'>连接中...</span></div>
+<div class='row'><b>开单指令:</b> <span id='ac' style='color:#ffe600;font-weight:bold'>--</span></div>
 <div class='row'><b>BTC现价:</b> <span id='p' style='color:#ffe600;font-weight:bold;font-size:16px'>$0.00</span></div>
 <div class='row'><b>BOLL 上/中/下:</b> <span id='b' style='color:#ff003c'>--</span></div>
 <div class='row'><b>EMA 7/25/99:</b> <span id='e' style='color:#00f3ff'>--</span></div>
 <div class='row'><b>1m RSI(6):</b> <span id='r1' style='color:#00ff41'>--</span></div>
 <div class='row'><b>10m RSI(6):</b> <span id='r10' style='color:#ffe600'>--</span></div>
 <div class='row'><b>1h 大趋势 RSI:</b> <span id='r1h' style='color:#da70d6'>--</span></div>
-<div class='row'><b>策略建议:</b> <span id='a' style='color:#ffe600'>--</span></div>
 </div>
 <script>setInterval(()=>{fetch('/api/data').then(r=>r.json()).then(d=>{
-document.getElementById('sn').innerText=d.session_name;
-document.getElementById('sw').innerText=d.win_rate;
 document.getElementById('t').innerText=d.title;
+document.getElementById('t').style.color=d.color;
+document.getElementById('ac').innerText=d.action;
 document.getElementById('p').innerText='$'+d.price.toFixed(2);
 document.getElementById('b').innerText=d.boll_up+' / '+d.boll_mb+' / '+d.boll_dn;
 document.getElementById('e').innerText=d.ema7+' / '+d.ema25+' / '+d.ema99;
 document.getElementById('r1').innerText=d.rsi_1m;
 document.getElementById('r10').innerText=d.rsi_10m;
 document.getElementById('r1h').innerText=d.rsi_1h;
-document.getElementById('a').innerText=d.advice;
 });},1000);</script></body></html>"""
 
 @app.route('/')
@@ -191,7 +175,7 @@ def api_data():
 
 @app.route('/test')
 def test_push():
-    notify("🧪 暴爷测试", "直连数据通道连接成功")
+    notify("🧪 暴爷测试", "实战通道连接成功")
     return "SUCCESS"
 
 if __name__ == "__main__":
