@@ -193,22 +193,31 @@ def monitor():
 
 threading.Thread(target=monitor, daemon=True).start()
 
-HTML_PAGE = (
-    "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>暴爷无极限 ⚡ 90%+ 绝杀终端</title>"
-    "<style>*{box-sizing:border-box}body{font-family:monospace;padding:12px;background:#05070a;color:#00ff41;margin:0}"
-    ".terminal{background:#0c1017;padding:20px;border-radius:12px;max-width:440px;margin:10px auto;border:1px solid #00ff4155}"
-    ".header{text-align:center;border-bottom:1px dashed #00ff4155;padding-bottom:12px;margin-bottom:15px}"
-    ".glitch-title{font-size:22px;font-weight:900;color:#ffe600}.sub-title{font-size:10px;color:#00f3ff;margin-top:5px}"
-    ".session-card{background:#070a0f;padding:12px;border-radius:8px;margin-bottom:15px;border:1px solid #00f3ff44}"
-    ".session-top{display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:bold}"
-    ".session-desc{font-size:11px;color:#848e9c;margin-top:4px}"
-    ".box{background:#070a0f;padding:14px;border-radius:8px;margin-bottom:15px;border-left:5px solid #00ff41}"
-    ".title{font-size:11px;color:#848e9c;margin-bottom:4px}.val{font-size:14px;font-weight:bold;color:#fff}"
-    ".price-row{display:flex;justify-content:space-between;align-items:center;background:#070a0f;padding:12px 16px;border-radius:8px;margin-bottom:15px;border:1px solid #00ff4144}"
-    ".price-label{font-size:12px;color:#848e9c}.price-val{font-size:20px;font-weight:bold;color:#ffe600}"
-    ".grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}"
-    ".gbox{background:#070a0f;padding:10px;border-radius:6px;text-align:center;border:1px solid #00ff4133}"
-    ".gname{font-size:10px;color:#848e9c}.gval{font-size:16px;font-weight:bold;margin-top:4px;color:#00ff41}"
-    ".trend-box{background:#070a0f;padding:12px;border-radius:6px;display:flex;justify-content:space-between;align-items:center;border:1px solid #00f3ff33;margin-bottom:15px}"
-    ".footer
+HTML_LINES = [
+    "<!DOCTYPE html>",
+    "<html>",
+    "<head>",
+    "<meta charset='utf-8'>",
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>",
+    "<title>暴爷无极限 ⚡ 90%+ 绝杀终端</title>",
+    "<style>",
+    "*{box-sizing:border-box}",
+    "body{font-family:monospace;padding:12px;background:#05070a;color:#00ff41;margin:0}",
+    ".terminal{background:#0c1017;padding:20px;border-radius:12px;max-width:440px;margin:10px auto;border:1px solid #00ff4155}",
+    ".header{text-align:center;border-bottom:1px dashed #00ff4155;padding-bottom:12px;margin-bottom:15px}",
+    ".glitch-title{font-size:22px;font-weight:900;color:#ffe600}",
+    ".sub-title{font-size:10px;color:#00f3ff;margin-top:5px}",
+    ".session-card{background:#070a0f;padding:12px;border-radius:8px;margin-bottom:15px;border:1px solid #00f3ff44}",
+    ".session-top{display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:bold}",
+    ".session-desc{font-size:11px;color:#848e9c;margin-top:4px}",
+    ".box{background:#070a0f;padding:14px;border-radius:8px;margin-bottom:15px;border-left:5px solid #00ff41}",
+    ".title{font-size:11px;color:#848e9c;margin-bottom:4px}",
+    ".val{font-size:14px;font-weight:bold;color:#fff}",
+    ".price-row{display:flex;justify-content:space-between;align-items:center;background:#070a0f;padding:12px 16px;border-radius:8px;margin-bottom:15px;border:1px solid #00ff4144}",
+    ".price-label{font-size:12px;color:#848e9c}",
+    ".price-val{font-size:20px;font-weight:bold;color:#ffe600}",
+    ".grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}",
+    ".gbox{background:#070a0f;padding:10px;border-radius:6px;text-align:center;border:1px solid #00ff4133}",
+    ".gname{font-size:10px;color:#848e9c}",
+    ".gval{font-size:16px;font-weight:bold;margin-top:4px;color:#00ff41}",
+    ".trend-box{background:#070a0f;padding:12px;border-radius:6px;display:flex;justify-cont
