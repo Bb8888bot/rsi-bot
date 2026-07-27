@@ -1,7 +1,7 @@
 import os, time, threading, requests, smtplib, collections
 from email.mime.text import MIMEText
 from email.header import Header
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, Response
 
 app = Flask(__name__)
 
@@ -13,7 +13,7 @@ TELEGRAM_CHAT_ID = os.environ.get("CHAT_ID")
 QQ_USER = os.environ.get("QQ_USER")
 QQ_PASS = os.environ.get("QQ_PASS")
 
-# 实时数据缓存（供网页 1 秒刷新）
+# 全局内存缓存
 LATEST_DATA = {
     "price": 0.0,
     "rsi_1m": 0.0,
@@ -22,14 +22,14 @@ LATEST_DATA = {
     "rsi_10m": 0.0,
     "rsi_1h": 0.0,
     "signal_title": "初始化中...",
-    "advice": "正在接入事件合约现货行情源",
+    "advice": "正在连接事件合约数据源",
     "color": "#f0b90b",
     "update_time": "--"
 }
 
 PRICE_HISTORY = collections.deque(maxlen=10)
 
-# ----------------- 双通道通知模块 -----------------
+# ----------------- 推送模块 -----------------
 
 def send_tg(msg):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -38,14 +38,14 @@ def send_tg(msg):
     try:
         requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=5)
     except Exception as e:
-        print("TG推送失败:", e)
+        print("TG推送异常:", e)
 
 def send_email(subject, content):
     if not QQ_USER or not QQ_PASS:
         return
     try:
         message = MIMEText(content, 'plain', 'utf-8')
-        message['From'] = Header(f"事件合约预警助手 <{QQ_USER}>", 'utf-8')
+        message['From'] = Header(f"事件合约助手 <{QQ_USER}>", 'utf-8')
         message['To'] = Header(QQ_USER, 'utf-8')
         message['Subject'] = Header(subject, 'utf-8')
 
@@ -53,16 +53,16 @@ def send_email(subject, content):
         server.login(QQ_USER, QQ_PASS)
         server.sendmail(QQ_USER, [QQ_USER], message.as_string())
         server.quit()
-        print("预警邮件发送成功")
+        print("邮件推送成功")
     except Exception as e:
-        print("邮件发送失败:", e)
+        print("邮件推送异常:", e)
 
 def notify(title, detail_text):
     send_tg(f"{title}\n{detail_text}")
     clean_text = detail_text.replace('*', '').replace('`', '')
     send_email(title, f"{title}\n\n{clean_text}\n\n发送时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-# ----------------- 指标计算模块 -----------------
+# ----------------- 计算模块 -----------------
 
 def calc_rsi(prices, period=6):
     if len(prices) < period + 1:
@@ -97,7 +97,6 @@ def aggregate_klines(res, interval_ms):
     return list(grouped.values())
 
 def get_full_market_data():
-    # 彻底修正：使用币安现货行情 API（api.binance.com），完全匹配事件合约底层的现货指数价格
     url = "https://api.binance.com/api/v3/klines"
     res = requests.get(url, params={"symbol": "BTCUSDT", "interval": "1m", "limit": 1000}, timeout=5).json()
     
@@ -116,26 +115,24 @@ def analyze_all_indicators(price, rsi_1m, rsi_3m, rsi_5m, rsi_10m, rsi_1h):
     if not all([rsi_1m, rsi_3m, rsi_5m, rsi_10m, rsi_1h]):
         return "数据计算中...", "等待数据完整接入", "#f0b90b"
     
-    # 85%+ 高胜率多周期共振信号
     if rsi_1h >= 50 and rsi_10m <= 30 and rsi_1m <= 15:
         return "🔥【85%+ 高胜率】大趋势向上 + 10m/1m 深度超卖共振！", "强烈建议：买入看涨 (UP)", "#10b981"
     elif rsi_1h <= 50 and rsi_10m >= 70 and rsi_1m >= 85:
         return "🔥【85%+ 高胜率】大趋势向下 + 10m/1m 深度超买共振！", "强烈建议：买入看跌 (DOWN)", "#ef4444"
     elif rsi_1m <= 15 and rsi_3m <= 20 and rsi_5m <= 25:
-        return "⚡【短线三重超卖】1m/3m/5m 现货联合插针！", "建议：抓短线强反弹 (UP)", "#10b981"
+        return "⚡【短线三重超卖】1m/3m/5m 联合插针！", "建议：抓短线强反弹 (UP)", "#10b981"
     elif rsi_1m >= 85 and rsi_3m >= 80 and rsi_5m >= 75:
-        return "⚡【短线三重超买】1m/3m/5m 现货联合拉升！", "建议：抓短线强回撤 (DOWN)", "#ef4444"
+        return "⚡【短线三重超买】1m/3m/5m 联合拉升！", "建议：抓短线强回撤 (DOWN)", "#ef4444"
     elif rsi_1m >= 85 or rsi_10m >= 85:
         return "⚠️ 事件合约触发极度超买警戒 (≥ 85)", "谨防见顶急跌，可小仓买入看跌 (DOWN)", "#f97316"
     elif rsi_1m <= 15 or rsi_10m <= 15:
         return "💡 事件合约触发极度超卖警戒 (≤ 15)", "谨防快速回升，可小仓买入看涨 (UP)", "#3b82f6"
     else:
-        return "⏳ 事件合约现货常态运转中", "建议观望，等待 >85 或 <15 极值信号", "#848e9c"
+        return "⏳ 事件合约常态运转中", "建议观望，等待 >85 或 <15 极值信号", "#848e9c"
 
-# ----------------- Web 界面 -----------------
+# ----------------- 原生 Web 界面 -----------------
 
-HTML_TEMPLATE = """
-<!DOCTYPE html>
+HTML_CONTENT = """<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -162,7 +159,7 @@ HTML_TEMPLATE = """
         <h2>⚡ BTC 事件合约专属终端 <span class="badge">1s 极速</span></h2>
         <div class="box" id="signal-box">
             <div class="box-title" id="signal-title">加载中...</div>
-            <div class="box-val" id="signal-advice">正在连接事件合约现货源...</div>
+            <div class="box-val" id="signal-advice">正在连接数据源...</div>
         </div>
         <div class="item"><span>事件合约参考价</span><span class="val" id="price">$0.00</span></div>
         
@@ -174,7 +171,7 @@ HTML_TEMPLATE = """
         </div>
         
         <div class="item" style="margin-top:15px;"><span>1h RSI(6) [大趋势]</span><span class="val" id="rsi-1h">--</span></div>
-        <div class="time">更新时间: <span id="update-time">--</span><br>(已锁定币安事件合约底层现货数据源)</div>
+        <div class="time">更新时间: <span id="update-time">--</span><br>(币安事件合约底层现货行情源)</div>
     </div>
 
     <script>
@@ -183,7 +180,7 @@ HTML_TEMPLATE = """
                 const res = await fetch('/api/data');
                 const data = await res.json();
                 
-                document.getElementById('price').innerText = '$' + data.price.toLocaleString('en-US', {minimumFractionDigits: 2});
+                document.getElementById('price').innerText = '$' + Number(data.price).toLocaleString('en-US', {minimumFractionDigits: 2});
                 document.getElementById('rsi-1m').innerText = data.rsi_1m;
                 document.getElementById('rsi-3m').innerText = data.rsi_3m;
                 document.getElementById('rsi-5m').innerText = data.rsi_5m;
@@ -196,25 +193,24 @@ HTML_TEMPLATE = """
                 document.getElementById('signal-box').style.borderLeftColor = data.color;
                 document.getElementById('update-time').innerText = data.update_time;
             } catch (e) {
-                console.error("数据刷新失败:", e);
+                console.error("刷新失败:", e);
             }
         }
         setInterval(fetchMarketData, 1000);
         fetchMarketData();
     </script>
 </body>
-</html>
-"""
+</html>"""
 
 @app.route('/')
 def home():
-    return render_template_string(HTML_TEMPLATE)
+    return Response(HTML_CONTENT, mimetype='text/html')
 
 @app.route('/api/data')
 def api_data():
     return jsonify(LATEST_DATA)
 
-# ----------------- 1秒高频后台监控 -----------------
+# ----------------- 后台监控 -----------------
 
 def monitor():
     global LATEST_DATA, PRICE_HISTORY
@@ -242,6 +238,8 @@ def monitor():
                 "update_time": now_str
             }
 
-            # 1m RSI 极值预警
+            # 1m RSI 预警
             if rsi_1m and rsi_1m >= 85 and not s_1m_high:
-                notify("🚨 【事件合约预警】BTC 1m RSI 极度超买！", f"现货价格: `${price}`\n1m RSI(
+                notify("🚨 【事件合约预警】BTC 1m RSI 极度超买！", f"参考价格: `${price}`\n1m RSI(6): *{rsi_1m}* (≥ 85)\n👉 提示：1分钟急剧冲高，谨防见顶回撤！")
+                s_1m_high = True
+            elif rsi_1m and rsi_1m <= 15 an
