@@ -1,5 +1,5 @@
 import os, time, threading, requests
-from flask import Flask, jsonify, Response
+from flask import Flask, jsonify, render_template_string, Response
 
 app = Flask(__name__)
 
@@ -193,36 +193,30 @@ def monitor():
 
 threading.Thread(target=monitor, daemon=True).start()
 
-@app.route('/')
-def home():
-    txt = (
-        "=== 暴爷无极限 ⚡ 90%+ 绝杀合约终端 ===\n"
-        f"当前状态: {DATA['title']} [{DATA['signal_tier']}]\n"
-        f"BTC合约现价: ${DATA['price']}\n"
-        f"当前时段: {DATA['session_name']} | {DATA['win_rate']}\n"
-        f"1m BOLL 上轨: ${DATA['boll_up']} | 下轨: ${DATA['boll_dn']}\n"
-        f"1m RSI: {DATA['rsi_1m']} | 3m RSI: {DATA['rsi_3m']} | 5m RSI: {DATA['rsi_5m']} | 10m RSI: {DATA['rsi_10m']}\n"
-        f"1h 大趋势 RSI: {DATA['rsi_1h']}\n"
-        f"操作建议: {DATA['advice']}\n"
-        f"北京时间: {DATA['time']}"
-    )
-    return Response(txt, mimetype="text/plain; charset=utf-8")
-
-@app.route('/api/data')
-def api_data():
-    return jsonify(DATA)
-
-@app.route('/test')
-def test_push():
-    bj_time = get_beijing_time()
-    s_name, s_adv, win_rate, _ = get_session_info()
-    t_msg = f"测试事件合约预警通知\n当前时段: {s_name} [{win_rate}]\n策略建议: {s_adv}\n时间: {bj_time}"
-    tg_ok, tg_info = send_tg(f"🧪【暴爷无极限绝杀测试】\n{t_msg}")
-    wb_ok, wb_info = send_webhook("企业微信绝杀矩阵诊断通知", t_msg)
-    tg_res = "SUCCESS" if tg_ok else f"FAILED ({tg_info})"
-    wb_res = "SUCCESS" if wb_ok else f"FAILED ({wb_info})"
-    return f"Telegram: {tg_res} | Webhook: {wb_res} | Time: {bj_time}"
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>暴爷无极限 ⚡ 90%+ 绝杀终端</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:'Courier New',Consolas,monospace;padding:12px;background:#05070a;color:#00ff41;margin:0}
+body::before{content:"";position:fixed;top:0;left:0;width:100%;height:100%;background:linear-gradient(rgba(18,16,16,0) 50%,rgba(0,0,0,0.25) 50%);background-size:100% 4px;z-index:999;pointer-events:none}
+.terminal{background:#0c1017;padding:20px;border-radius:12px;max-width:440px;margin:10px auto;border:1px solid #00ff4155;box-shadow:0 0 20px rgba(0,255,65,0.2)}
+.header{text-align:center;border-bottom:1px dashed #00ff4155;padding-bottom:12px;margin-bottom:15px}
+.glitch-title{font-size:22px;font-weight:900;color:#ffe600;text-shadow:0 0 10px #ffe600,0 0 20px #ff003c}
+.sub-title{font-size:10px;color:#00f3ff;margin-top:5px}
+.session-card{background:#070a0f;padding:12px;border-radius:8px;margin-bottom:15px;border:1px solid #00f3ff44}
+.session-top{display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:bold}
+.session-desc{font-size:11px;color:#848e9c;margin-top:4px}
+.box{background:#070a0f;padding:14px;border-radius:8px;margin-bottom:15px;border-left:5px solid #00ff41}
+.title{font-size:11px;color:#848e9c;margin-bottom:4px}
+.val{font-size:14px;font-weight:bold;color:#fff}
+.price-row{display:flex;justify-content:space-between;align-items:center;background:#070a0f;padding:12px 16px;border-radius:8px;margin-bottom:15px;border:1px solid #00ff4144}
+.price-label{font-size:12px;color:#848e9c}
+.price-val{font-size:20px;font-weight:bold;color:#ffe600;text-shadow:0 0 8px #ffe60066}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.gbox{background:#070a0f;padding:10px;border-radius:6px;text-align:center;border:1px solid #00ff4133}
+.gname{f
