@@ -65,8 +65,26 @@ def agg_klines(res, ms):
     return list(g.values())
 
 def fetch_data():
-    url = "https://api.binance.com/api/v3/klines"
-    res = requests.get(url, params={"symbol": "BTCUSDT", "interval": "1m", "limit": 1000}, timeout=5).json()
+    # 多节点自动轮询，避开 Render 服务器 IP 拦截
+    urls = [
+        "https://data-api.binance.vision/api/v3/klines",
+        "https://api1.binance.com/api/v3/klines",
+        "https://api2.binance.com/api/v3/klines",
+        "https://api.binance.com/api/v3/klines"
+    ]
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    res = None
+    for u in urls:
+        try:
+            r = requests.get(u, params={"symbol": "BTCUSDT", "interval": "1m", "limit": 400}, headers=headers, timeout=3)
+            if r.status_code == 200:
+                res = r.json()
+                break
+        except:
+            continue
+    if not res:
+        raise Exception("行情接口连接超时")
+
     p1m = [float(k[4]) for k in res]
     price = p1m[-1]
     r1m = calc_rsi(p1m, 6)
